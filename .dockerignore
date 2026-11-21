@@ -1,0 +1,10 @@
+**
+!apps/api-lens/Dockerfile
+!apps/api-lens/app.py
+!apps/api-lens/src/__init__.py
+!apps/api-lens/src/trace_events.py
+!apps/api-lens/src/trace_reader.py
+!apps/api-lens/pyproject.toml
+!apps/api-lens/uv.lock
+!apps/web/index.html
+!examples/traces/readme-run.timed.sanitized.jsonl

@@ -1,0 +1,28 @@
+"""Add monotonic arrival offsets to Codex CLI JSONL."""
+
+import json
+from collections.abc import Callable, Iterable, Iterator
+from time import monotonic_ns
+from typing import TextIO
+
+from .trace_events import TimedEvent, TraceEvent
+
+
+class EventCapture:
+    def __init__(self, *, clock_ns: Callable[[], int] = monotonic_ns) -> None:
+        self._clock_ns = clock_ns
+
+    def read(self, lines: Iterable[str]) -> Iterator[TimedEvent]:
+        """Yield each event with nanoseconds elapsed since reading started."""
+        started_at_ns = self._clock_ns()
+        for line in lines:
+            received_at_ns = self._clock_ns()
+            yield TimedEvent(
+                elapsed_ns=received_at_ns - started_at_ns,
+                event=TraceEvent.model_validate_json(line),
+            )
+
+    def write(self, lines: Iterable[str], output: TextIO) -> None:
+        """Write and flush each timed record as it arrives."""
+        for record in self.read(lines):
+            print(json.dumps(record.model_dump(), ensure_ascii=False), file=output, flush=True)

@@ -1,0 +1,22 @@
+services:
+  frontend:
+    build: ./apps/web
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${AGENT_LENS_PORT:-8080}:80"
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/api-lens/Dockerfile
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/openapi.json', timeout=2).close()"
+      interval: 5s
+      timeout: 3s
+      retries: 10

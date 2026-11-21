@@ -1,0 +1,13 @@
+{"elapsed_ns":1330413053,"event":{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000002"}}
+{"elapsed_ns":1379100290,"event":{"type":"item.completed","item":{"id":"item_0","type":"error","message":"[redacted: CLI deprecation warning]"}}}
+{"elapsed_ns":1379205201,"event":{"type":"item.completed","item":{"id":"item_1","type":"error","message":"[redacted: CLI deprecation warning]"}}}
+{"elapsed_ns":1379227500,"event":{"type":"item.completed","item":{"id":"item_2","type":"error","message":"[redacted: CLI deprecation warning]"}}}
+{"elapsed_ns":1379239629,"event":{"type":"item.completed","item":{"id":"item_3","type":"error","message":"[redacted: CLI deprecation warning]"}}}
+{"elapsed_ns":1556643767,"event":{"type":"turn.started"}}
+{"elapsed_ns":5466721169,"event":{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"[redacted: intermediate assistant message]"}}}
+{"elapsed_ns":6653488122,"event":{"type":"item.started","item":{"id":"item_5","type":"command_execution","command":"zsh -lc 'cat <global-instructions>/RTK.md'","aggregated_output":"","exit_code":null,"status":"in_progress"}}}
+{"elapsed_ns":6653975714,"event":{"type":"item.completed","item":{"id":"item_5","type":"command_execution","command":"zsh -lc 'cat <global-instructions>/RTK.md'","aggregated_output":"[redacted: global instruction contents]\n","exit_code":0,"status":"completed"}}}
+{"elapsed_ns":6701815485,"event":{"type":"item.started","item":{"id":"item_6","type":"command_execution","command":"zsh -lc 'cat examples/readme-workspace/README.md'","aggregated_output":"","exit_code":null,"status":"in_progress"}}}
+{"elapsed_ns":6703419872,"event":{"type":"item.completed","item":{"id":"item_6","type":"command_execution","command":"zsh -lc 'cat examples/readme-workspace/README.md'","aggregated_output":"The example service is named juniper.\n","exit_code":0,"status":"completed"}}}
+{"elapsed_ns":9468486899,"event":{"type":"item.completed","item":{"id":"item_7","type":"agent_message","text":"The example service is named **juniper**."}}}
+{"elapsed_ns":9488213199,"event":{"type":"turn.completed","usage":{"input_tokens":40713,"cached_input_tokens":20096,"cache_write_input_tokens":0,"output_tokens":98,"reasoning_output_tokens":0}}}
