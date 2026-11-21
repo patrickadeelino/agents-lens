@@ -4,13 +4,14 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.119.1,<1",
+    "httpx>=0.28,<1",
     "pydantic>=2.11,<3",
     "uvicorn>=0.22,<1",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28,<1",
+    "coverage>=7.17.4",
     "mypy>=2.4.1",
     "pytest>=8,<10",
     "ruff>=0.17.6",
@@ -30,6 +31,10 @@ max-complexity = 6
 
 [tool.mypy]
 python_version = "3.13"
-files = ["app.py", "src", "scripts", "tests"]
+files = ["app.py", "executor.py", "src", "scripts", "tests"]
 check_untyped_defs = true
 warn_unused_ignores = true
+
+[tool.coverage.run]
+branch = true
+source = ["app", "executor", "src", "scripts"]

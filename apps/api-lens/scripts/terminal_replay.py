@@ -3,9 +3,9 @@
 from collections.abc import Iterable
 from typing import TextIO
 
-from .command_execution import CommandExecutionState
-from .trace_events import TraceEvent
-from .trace_reader import TraceRecord, read_trace
+from src.domain.command_execution import CommandExecutionState
+from src.domain.trace_events import TraceEvent
+from src.domain.trace_reader import TraceRecord, read_trace
 
 
 class TerminalReplay:

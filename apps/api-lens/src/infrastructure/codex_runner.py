@@ -1,11 +1,12 @@
 """Run Codex and save its timed event stream in a private capture directory."""
 
-import json
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from .capture import EventCapture
+from src.application.capture import EventCapture
+
+from .capture_files import CaptureFiles
 
 
 class CodexRunner:
@@ -34,8 +35,9 @@ class CodexRunner:
         self, command: Sequence[str], *, cwd: Path, capture_dir: Path
     ) -> int:
         """Stream a subprocess trace and record its exit code after it stops."""
+        output = CaptureFiles(capture_dir)
         with (
-            (capture_dir / "events.timed.jsonl").open("x", encoding="utf-8") as trace,
+            output.open_trace() as trace,
             (capture_dir / "stderr.log").open("x", encoding="utf-8") as diagnostics,
             subprocess.Popen(
                 command,
@@ -54,6 +56,5 @@ class CodexRunner:
                 process.kill()
                 raise
 
-        with (capture_dir / "result.json").open("x", encoding="utf-8") as result:
-            print(json.dumps({"exit_code": exit_code}), file=result)
+        output.write_result(exit_code)
         return exit_code

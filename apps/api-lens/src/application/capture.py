@@ -5,7 +5,9 @@ from collections.abc import Callable, Iterable, Iterator
 from time import monotonic_ns
 from typing import TextIO
 
-from .trace_events import TimedEvent, TraceEvent
+from src.domain.trace_events import TimedEvent, TraceEvent
+
+type RecordCallback = Callable[[TimedEvent], None]
 
 
 class EventCapture:
@@ -22,7 +24,17 @@ class EventCapture:
                 event=TraceEvent.model_validate_json(line),
             )
 
-    def write(self, lines: Iterable[str], output: TextIO) -> None:
-        """Write and flush each timed record as it arrives."""
+    def write(
+        self,
+        lines: Iterable[str],
+        output: TextIO,
+        *,
+        on_record: RecordCallback | None = None,
+    ) -> None:
+        """Write each timed record and notify the callback after flushing it."""
         for record in self.read(lines):
-            print(json.dumps(record.model_dump(), ensure_ascii=False), file=output, flush=True)
+            line = json.dumps(record.model_dump(), ensure_ascii=False)
+            output.write(line + "\n")
+            output.flush()
+            if on_record is not None:
+                on_record(record)

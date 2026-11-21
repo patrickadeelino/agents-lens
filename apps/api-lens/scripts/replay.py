@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.replay import TerminalReplay
+from scripts.terminal_replay import TerminalReplay
 
 
 def main() -> None:

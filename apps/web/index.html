@@ -38,6 +38,23 @@
     }
     button:hover:not(:disabled) { background: #b3f7dc; }
     button:disabled { opacity: .55; cursor: default; }
+    .secondary { background: #24323e; color: #e7edf3; }
+    .secondary:hover:not(:disabled) { background: #314352; }
+    .run-form { display: grid; gap: 10px; margin-bottom: 24px; }
+    .run-form label { font-weight: 650; }
+    textarea {
+      width: 100%;
+      min-height: 100px;
+      resize: vertical;
+      padding: 12px;
+      border: 1px solid #354654;
+      border-radius: 8px;
+      background: #161f28;
+      color: inherit;
+      font: inherit;
+    }
+    textarea::placeholder { color: #a7b4c2; }
+    .run-actions { display: flex; flex-wrap: wrap; gap: 10px; }
     :focus-visible { outline: 2px solid #8aefc7; outline-offset: 4px; }
     section { border: 1px solid #283642; border-radius: 12px; background: #161f28; }
     .section-header {
@@ -61,6 +78,7 @@
       overflow-wrap: anywhere;
     }
     summary:hover { background: #1d2934; }
+    .agent-message { padding: 0 20px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
     .offset { margin-left: 12px; color: #a7b4c2; white-space: nowrap; }
     pre {
       margin: 0;
@@ -73,7 +91,7 @@
     }
     @media (max-width: 480px) {
       main { padding: 36px 16px; }
-      .section-header, summary, pre { padding-inline: 14px; }
+      .section-header, .agent-message, summary, pre { padding-inline: 14px; }
     }
   </style>
 </head>
@@ -82,10 +100,19 @@
     <header>
       <div>
         <h1>Agent Lens</h1>
-        <p>Replay da captura de exemplo</p>
+        <p>Workspace de exemplo em somente leitura</p>
       </div>
-      <button id="execute" type="button">Executar</button>
     </header>
+
+    <form id="run-form" class="run-form">
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" name="prompt" rows="4" required
+        placeholder="Leia o README e diga o nome do serviço."></textarea>
+      <div class="run-actions">
+        <button id="execute" type="submit">Executar</button>
+        <button id="replay" class="secondary" type="button">Ver replay de exemplo</button>
+      </div>
+    </form>
 
     <section aria-labelledby="events-title">
       <div class="section-header">
@@ -97,7 +124,10 @@
   </main>
 
   <script>
+    const form = document.querySelector("#run-form");
+    const prompt = document.querySelector("#prompt");
     const execute = document.querySelector("#execute");
+    const replay = document.querySelector("#replay");
     const timeline = document.querySelector("#timeline");
     const status = document.querySelector("#status");
     const milliseconds = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
@@ -120,32 +150,128 @@
 
       summary.append(label, offset);
       details.append(summary, payload);
+      if (event.type === "item.completed" && event.item?.type === "agent_message") {
+        const message = document.createElement("p");
+        message.className = "agent-message";
+        message.textContent = event.item.text;
+        row.append(message);
+      }
       row.append(details);
       timeline.append(row);
     }
 
-    execute.addEventListener("click", () => {
+    function setStatus(state, message) {
+      status.dataset.state = state;
+      status.textContent = message;
+    }
+
+    function begin(message) {
       execute.disabled = true;
+      replay.disabled = true;
       timeline.replaceChildren();
-      status.dataset.state = "connecting";
-      status.textContent = "Conectando";
+      setStatus("connecting", message);
+    }
 
-      const source = new EventSource("/events");
+    function finish(state, message) {
+      setStatus(state, message);
+      execute.disabled = false;
+      replay.disabled = false;
+    }
 
-      function finish(state, message) {
-        source.close();
-        status.dataset.state = state;
-        status.textContent = message;
-        execute.disabled = false;
+    async function* readFrames(body) {
+      const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += value;
+
+          let boundary;
+          while ((boundary = /\r?\n\r?\n/.exec(buffer)) !== null) {
+            const lines = buffer.slice(0, boundary.index).split(/\r?\n/);
+            buffer = buffer.slice(boundary.index + boundary[0].length);
+            const name = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
+            const data = lines.filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice(5).replace(/^ /, "")).join("\n");
+            if (name && data) yield { name, data: JSON.parse(data) };
+          }
+        }
+      } finally {
+        try {
+          await reader.cancel();
+        } catch {
+          // Read failures are handled by the caller.
+        }
+        reader.releaseLock();
+      }
+    }
+
+    function finishRun(exitCode, turn, error) {
+      if (error === "event_too_large") {
+        finish("error", "Captura incompleta. Um evento excedeu o limite de 8 MiB.");
+      } else if (turn === "turn.failed" || (Number.isInteger(exitCode) && exitCode !== 0)) {
+        const code = Number.isInteger(exitCode) ? " (código " + exitCode + ")" : "";
+        finish("error", "Execução falhou" + code);
+      } else if (exitCode === 0 && turn === "turn.completed") {
+        finish("end", "Execução concluída (código 0)");
+      } else {
+        finish("error", "Resultado da execução não confirmado");
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (execute.disabled) return;
+      if (!prompt.value.trim()) {
+        setStatus("error", "Digite um prompt para executar.");
+        prompt.focus();
+        return;
       }
 
-      source.addEventListener("open", () => {
-        status.dataset.state = "open";
-        status.textContent = "Recebendo eventos";
-      });
+      begin("Enviando prompt");
+      try {
+        const response = await fetch("/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+          body: JSON.stringify({ prompt: prompt.value }),
+        });
+        if (!response.ok || !response.body) {
+          finish("error", "Falha ao iniciar a execução (HTTP " + response.status + ")");
+          return;
+        }
+
+        setStatus("open", "Recebendo eventos");
+        let turn;
+        for await (const frame of readFrames(response.body)) {
+          if (frame.name === "record") {
+            appendRecord(frame.data);
+            const type = frame.data.event.type;
+            if (type === "turn.completed" || type === "turn.failed") turn = type;
+          } else if (frame.name === "end") {
+            finishRun(frame.data.exit_code, turn, frame.data.error);
+            return;
+          }
+        }
+        finish("error", "Conexão encerrada sem confirmação do resultado");
+      } catch {
+        finish("error", "Falha na conexão. Resultado da execução não confirmado.");
+      }
+    });
+
+    replay.addEventListener("click", () => {
+      begin("Conectando ao replay");
+      const source = new EventSource("/events");
+      function finishReplay(state, message) {
+        source.close();
+        finish(state, message);
+      }
+
+      source.addEventListener("open", () => setStatus("open", "Recebendo eventos do replay"));
       source.addEventListener("record", (message) => appendRecord(JSON.parse(message.data)));
-      source.addEventListener("end", () => finish("end", "Replay concluído"));
-      source.addEventListener("error", () => finish("error", "Conexão interrompida"));
+      source.addEventListener("end", () => finishReplay("end", "Replay concluído"));
+      source.addEventListener("error", () => finishReplay("error", "Conexão do replay interrompida"));
     });
   </script>
 </body>

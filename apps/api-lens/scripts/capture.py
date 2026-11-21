@@ -2,7 +2,7 @@
 
 import sys
 
-from src.capture import EventCapture
+from src.application.capture import EventCapture
 
 
 def main() -> None:

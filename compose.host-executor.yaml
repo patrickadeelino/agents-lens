@@ -1,0 +1,17 @@
+services:
+  backend:
+    environment:
+      AGENT_LENS_EXECUTOR_SOCKET: /executor-ipc/executor.sock
+    volumes:
+      - type: bind
+        source: ${AGENT_LENS_HOST_SOCKET_DIR:?Set the host executor socket directory}
+        target: /executor-ipc
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: captures
+        target: /app/.captures
+
+volumes:
+  captures:
