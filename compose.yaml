@@ -11,6 +11,20 @@ services:
     build:
       context: .
       dockerfile: apps/api-lens/Dockerfile
+    environment:
+      AGENT_LENS_OTEL_ENABLED: "${AGENT_LENS_OTEL_ENABLED:-0}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      AGENT_LENS_EXECUTOR_SOCKET: "${AGENT_LENS_HOST_SOCKET_DIR:+/executor-ipc/executor.sock}"
+    volumes:
+      - type: bind
+        source: ${AGENT_LENS_HOST_SOCKET_DIR:-./examples/empty-executor-ipc}
+        target: /executor-ipc
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: captures
+        target: /app/.captures
     healthcheck:
       test:
         - CMD
@@ -20,3 +34,37 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  otel-collector:
+    profiles: [observability]
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.162.0
+    init: true
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      ZO_ROOT_USER_EMAIL: ${ZO_ROOT_USER_EMAIL:-}
+      ZO_ROOT_USER_PASSWORD: ${ZO_ROOT_USER_PASSWORD:-}
+    ports:
+      - "127.0.0.1:${AGENT_LENS_OTLP_PORT:-14318}:4318"
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      openobserve:
+        condition: service_started
+
+  openobserve:
+    profiles: [observability]
+    image: public.ecr.aws/zinclabs/openobserve:v1.0.0
+    init: true
+    environment:
+      ZO_ROOT_USER_EMAIL: ${ZO_ROOT_USER_EMAIL:-}
+      ZO_ROOT_USER_PASSWORD: ${ZO_ROOT_USER_PASSWORD:-}
+      ZO_LOCAL_MODE: "true"
+      ZO_DATA_DIR: /data
+    ports:
+      - "127.0.0.1:${AGENT_LENS_OPENOBSERVE_PORT:-15080}:5080"
+    volumes:
+      - observability-data:/data
+
+volumes:
+  captures:
+  observability-data:

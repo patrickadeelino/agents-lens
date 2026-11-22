@@ -8,13 +8,17 @@ from time import monotonic_ns
 from src.domain.trace_events import TimedEvent
 
 
+class InvalidReplayOffsets(ValueError):
+    """The trace cannot be replayed in arrival order."""
+
+
 class TimedReplay:
     def __init__(self, records: tuple[TimedEvent, ...]) -> None:
         if not records or any(
             current.elapsed_ns > following.elapsed_ns
             for current, following in pairwise(records)
         ):
-            raise ValueError("Replay trace has invalid arrival offsets.")
+            raise InvalidReplayOffsets("Replay trace has invalid arrival offsets.")
         self._records = records
 
     async def stream(self) -> AsyncIterator[TimedEvent]:

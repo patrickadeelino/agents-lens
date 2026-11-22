@@ -1,13 +1,16 @@
 """Compose the Agent Lens web API."""
 
-from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
 from src.api.dependencies import PROJECT_DIR
+from src.api.observability import observed_app
 from src.api.routers.replay import router as replay_router
 from src.api.routers.runs import router as runs_router
 
-app = FastAPI(title="Agent Lens")
+app = observed_app(
+    "Agent Lens", "agent-lens-backend",
+    {("POST", "/runs"): "run.sse", ("GET", "/events"): "replay.sse"},
+)
 app.include_router(replay_router)
 app.include_router(runs_router)
 

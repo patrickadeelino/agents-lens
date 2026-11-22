@@ -2,6 +2,7 @@
 !apps/api-lens/Dockerfile
 !apps/api-lens/app.py
 !apps/api-lens/src/__init__.py
+!apps/api-lens/src/observability.py
 !apps/api-lens/src/infrastructure/__init__.py
 !apps/api-lens/src/infrastructure/capture_files.py
 !apps/api-lens/src/infrastructure/executor_client.py

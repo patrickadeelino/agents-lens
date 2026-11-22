@@ -2,8 +2,9 @@ import json
 import socket
 import sys
 from asyncio import Queue
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
@@ -13,6 +14,10 @@ import httpx
 import pytest
 import uvicorn
 from fastapi import FastAPI, Response
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
+from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 import executor
@@ -20,7 +25,9 @@ from app import app
 from executor import app as executor_app
 from src.api import dependencies
 from src.application import capture_run
+from src.application.capture_run import FlushedRecord
 from src.domain.trace_events import TimedEvent
+from src.infrastructure.capture_files import CaptureFiles
 from src.infrastructure.read_only_run import ReadOnlyRun
 
 LITERAL_PROMPT = '  --help\nLeia o README "juniper" ☕.\n'
@@ -36,6 +43,8 @@ assert 'default_permissions="agent-lens-readme"' in sys.argv
 assert 'permissions.agent-lens-readme.network.enabled=false' in sys.argv
 assert 'shell_environment_policy.inherit="none"' in sys.argv
 prompt = sys.stdin.buffer.read().decode("utf-8")
+if prompt == "report command outcome":
+    time.sleep(1)
 print(json.dumps({"type": "turn.started", "prompt": prompt, "cwd": str(Path.cwd())}), flush=True)
 if prompt == "report a diagnostic":
     print(json.dumps({"type": "error", "message": os.environ["CODEX_API_KEY"]}), flush=True)
@@ -44,6 +53,32 @@ if prompt == "emit a big record":
     print(json.dumps({"type": "item.completed", "item": {
         "id": "item_1", "type": "agent_message", "text": "x" * (128 * 1024),
     }}), flush=True)
+    print('{"type":"turn.completed"}', flush=True)
+    raise SystemExit(0)
+if prompt == "report command outcome":
+    print(json.dumps({"type": "item.completed", "item": {
+        "type": "command_execution", "status": "failed", "exit_code": 127,
+        "command": "private-fake-command", "aggregated_output": "private-fake-stdout",
+    }}), flush=True)
+    print('{"type":"private-fake-event"}', flush=True)
+    print('{"type":"turn.completed"}', flush=True)
+    raise SystemExit(0)
+if prompt == "measure command spans":
+    def command(event_type, item_id, status, exit_code=None):
+        print(json.dumps({"type": event_type, "item": {
+            "type": "command_execution", "id": item_id, "status": status, "exit_code": exit_code,
+            "command": "private-command-text", "aggregated_output": "private-command-output",
+        }}), flush=True)
+    command("item.started", "item_1", "in_progress")
+    time.sleep(0.03)
+    command("item.started", "item_2", "in_progress")
+    command("item.completed", "item_2", "failed", 127)
+    time.sleep(0.04)
+    command("item.completed", "item_1", "completed", 0)
+    command("item.completed", "item_3", "completed", 0)
+    command("item.started", "item_4", "in_progress")
+    command("item.started", "private-invalid-id", "in_progress")
+    command("item.completed", "private-invalid-id", "completed", 0)
     print('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
 if prompt == "exit 7":
@@ -251,16 +286,18 @@ def test_run_preserves_records_and_reports_nonzero_exit(
 @pytest.mark.usefixtures("executor_socket")
 def test_run_finishes_capture_after_the_client_disconnects(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
+    telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
 ) -> None:
-    enqueued: list[TimedEvent | None] = []
+    enqueued: list[FlushedRecord | None] = []
 
-    class TrackingQueue(Queue[TimedEvent | None]):
-        def put_nowait(self, item: TimedEvent | None) -> None:
+    class TrackingQueue(Queue[FlushedRecord | None]):
+        def put_nowait(self, item: FlushedRecord | None) -> None:
             enqueued.append(item)
             super().put_nowait(item)
 
     monkeypatch.setattr(capture_run, "Queue", TrackingQueue)
     backend, request_finished = live_http
+    span_exporter, log_exporter = telemetry_exports
     with backend.stream("POST", "/runs", json={"prompt": "Read the example."}) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
@@ -272,6 +309,7 @@ def test_run_finishes_capture_after_the_client_disconnects(
     directory = capture_directory(run_workspace)
     result = directory / "result.json"
     assert not result.exists()
+    assert [span.name for span in span_exporter.get_finished_spans()] == ["run.sse", "POST /runs"]
     (run_workspace / "release").touch()
 
     deadline = monotonic() + 5
@@ -291,8 +329,51 @@ def test_run_finishes_capture_after_the_client_disconnects(
     assert len(enqueued) == 1
     queued_record = enqueued[0]
     assert queued_record is not None
-    assert queued_record.model_dump() == first
+    assert queued_record.record.model_dump() == first
+    spans = assert_live_span_tree(span_exporter, directory.name)
+    assert (spans["POST /runs"].attributes or {})["agent_lens.outcome"] == "disconnected"
+    assert (spans["run.capture"].attributes or {})["agent_lens.outcome"] == "completed"
+    sse_attributes = spans["run.sse"].attributes or {}
+    assert sse_attributes["agent_lens.outcome"] == "disconnected"
+    assert sse_attributes["agent_lens.sse.records_sent"] == 1
+    assert [event.name for event in spans["run.sse"].events] == ["run.sse.first_record_sent"]
+    sse_end = spans["run.sse"].end_time
+    write_start = spans["capture.write_result"].start_time
+    assert sse_end is not None and write_start is not None and sse_end < write_start
+    assert (spans["capture.write_result"].attributes or {})["agent_lens.outcome"] == "completed"
+    assert_correlated_capture_logs(log_exporter, run_workspace, directory.name)
 
+
+def assert_live_span_tree(span_exporter: InMemorySpanExporter, run_id: str) -> dict[str, ReadableSpan]:
+    names = ["POST /runs", "run.capture", "executor.request", "POST /run", "codex.subprocess"]
+    extra = [("POST /runs", "run.sse"), ("run.capture", "capture.write_result")]
+    deadline = monotonic() + 5
+    while len(span_exporter.get_finished_spans()) < len(names) + len(extra):
+        if monotonic() >= deadline:
+            pytest.fail("The correlated capture did not finish")
+        sleep(0.01)
+    spans = {span.name: span for span in span_exporter.get_finished_spans()}
+    assert set(spans) == set(names) | {child for _, child in extra}
+    assert len({span.context.trace_id for span in spans.values() if span.context}) == 1
+    assert {(span.attributes or {})["agent_lens.run_id"] for span in spans.values()} == {run_id}
+    for parent, child in [*pairwise(names), *extra]:
+        parent_context, child_parent = spans[parent].context, spans[child].parent
+        assert parent_context is not None and child_parent is not None
+        assert child_parent.span_id == parent_context.span_id
+    return spans
+
+
+def assert_correlated_capture_logs(log_exporter: InMemoryLogRecordExporter, run_workspace: Path, run_id: str) -> None:
+    logs = {item.log_record.body: item.log_record for item in log_exporter.get_finished_logs()}
+    events = ("run.accepted", "run.sse.disconnected", "executor.subprocess.started", "run.capture.completed")
+    assert len({logs[event].trace_id for event in events}) == 1
+    assert all((logs[event].attributes or {})["run_id"] == run_id for event in events)
+    sent = [item for item in log_exporter.get_finished_logs() if item.log_record.body == "run.sse.record_sent"]
+    assert [(item.log_record.attributes or {})["event_count"] for item in sent] == [1]
+    assert (logs["run.capture.completed"].attributes or {})["event_count"] == 2
+    assert "run.sse.end_sent" not in logs
+    assert str(run_workspace) not in str(logs)
+    assert "Read the example." not in str(logs)
 
 @pytest.mark.parametrize(
     "tail",
@@ -333,6 +414,7 @@ def test_run_keeps_observed_records_and_rejects_invalid_executor_streams(
 
 def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "missing.sock"))
     backend, _ = live_http
@@ -346,6 +428,20 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
     directory = capture_directory(run_workspace)
     assert not (directory / "events.timed.jsonl").exists()
     assert not (directory / "result.json").exists()
+
+
+    stderr = capsys.readouterr().err
+    logs = {record["event"]: record for record in map(json.loads, stderr.splitlines())}
+    assert logs["run.accepted"]["run_id"] == directory.name
+    assert logs["run.capture.failed"]["error_code"] == "executor_unreachable"
+    assert logs["run.capture.failed"]["run_id"] == directory.name
+    assert logs["run.capture.failed"]["event_count"] == 0
+    assert "executor.request.first_event_received" not in logs
+    assert "run.sse.first_record_sent" not in logs
+    assert "run.sse.record_sent" not in logs
+    assert logs["run.sse.end_sent"]["event_count"] == 0
+    assert "missing.sock" not in stderr
+    assert "Read the example." not in stderr
 
 
 @pytest.mark.usefixtures("executor_socket")
@@ -371,7 +467,11 @@ def test_executor_redacts_its_key_before_broadcast_and_persistence(
 
 
 @pytest.mark.usefixtures("executor_socket")
-def test_run_streams_large_event_intact(live_http: tuple[httpx.Client, Event], run_workspace: Path) -> None:
+def test_run_streams_large_event_intact(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+    telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     backend, _ = live_http
 
     with backend.stream("POST", "/runs", json={"prompt": "emit a big record"}) as response:
@@ -395,6 +495,187 @@ def test_run_streams_large_event_intact(live_http: tuple[httpx.Client, Event], r
     assert [json.loads(line) for line in trace.splitlines()] == records
     assert json.loads((directory / "result.json").read_text(encoding="utf-8")) == {"exit_code": 0}
 
+    _, log_exporter = telemetry_exports
+    stderr = capsys.readouterr().err
+    exported = [item.log_record.attributes or {} for item in log_exporter.get_finished_logs()]
+    for logs in (exported, [json.loads(line) for line in stderr.splitlines()]):
+        assert_live_log_milestones(logs, directory.name)
+    for private_data in ("emit a big record", "x" * 128, "not-a-real-key", str(run_workspace)):
+        assert private_data not in stderr
+        assert private_data not in str(exported)
+
+
+def assert_live_log_milestones(logs: Sequence[Mapping[str, object]], run_id: str) -> None:
+    milestones = (
+        "executor.request.started",
+        "executor.subprocess.first_event_read",
+        "executor.request.first_event_received",
+        "run.capture.first_record_saved",
+        "run.sse.first_record_sent",
+    )
+    assert tuple(log["event"] for log in logs if log["event"] in milestones) == milestones
+    assert {log["run_id"] for log in logs} == {run_id}
+    assert len({log["trace_id"] for log in logs}) == 1
+    by_event = {log["event"]: log for log in logs}
+    assert all(isinstance(by_event[name]["duration_ms"], int) for name in milestones[1:])
+    assert by_event["executor.subprocess.completed"]["event_count"] == 3
+    assert by_event["run.capture.completed"]["event_count"] == 3
+
+    delivery = [log for log in logs if log["event"] in ("run.sse.record_sent", "run.sse.end_sent")]
+    assert [(log["event"], log["event_count"]) for log in delivery] == [
+        ("run.sse.record_sent", 1), ("run.sse.record_sent", 2), ("run.sse.record_sent", 3),
+        ("run.sse.end_sent", 3),
+    ]
+    assert by_event["run.sse.end_sent"]["exit_code"] == 0
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_run_logs_safe_command_metadata_for_a_failed_command_in_a_completed_turn(
+    live_http: tuple[httpx.Client, Event],
+    telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
+    capsys: pytest.CaptureFixture[str], run_workspace: Path,
+) -> None:
+    backend, request_finished = live_http
+    response = backend.post("/runs", json={"prompt": "report command outcome"})
+    assert response.status_code == 200
+    assert "private-fake-command" in response.text
+    assert request_finished.wait(3)
+
+    span_exporter, log_exporter = telemetry_exports
+    spans = assert_live_span_tree(span_exporter, capture_directory(run_workspace).name)
+    assert_successful_stream_spans(spans)
+    sse_context = spans["run.sse"].context
+    assert sse_context is not None
+    stderr = capsys.readouterr().err
+    exported = [item.log_record.attributes or {} for item in log_exporter.get_finished_logs()]
+    for logs in (exported, [json.loads(line) for line in stderr.splitlines()]):
+        records = [log for log in logs if log["event"] == "run.sse.record_sent"]
+        assert [log["event_type"] for log in records] == ["turn.started", "item.completed", "other", "turn.completed"]
+        command = records[1]
+        assert command["item_type"] == "command_execution"
+        assert command["command_status"] == "failed"
+        assert command["command_exit_code"] == 127
+        assert command["outcome"] == "completed"
+        delays = [delay for log in records if isinstance(delay := log["flush_to_sse_us"], int)]
+        assert len(delays) == len(records)
+        assert max(delays) == (spans["run.sse"].attributes or {})["agent_lens.sse.max_flush_to_sse_us"]
+        assert {log["span_id"] for log in records} == {f"{sse_context.span_id:016x}"}
+    for private_data in ("private-fake-command", "private-fake-stdout", "private-fake-event"):
+        assert private_data not in stderr
+        assert private_data not in str(exported)
+
+
+def assert_successful_stream_spans(spans: dict[str, ReadableSpan]) -> None:
+    subprocess_span = spans["codex.subprocess"]
+    assert [event.name for event in subprocess_span.events] == [
+        "executor.subprocess.first_event_read", "executor.stream.first_event_sent",
+    ]
+    first_read, first_sent = subprocess_span.events
+    assert subprocess_span.start_time is not None
+    assert first_read.timestamp - subprocess_span.start_time >= 900_000_000
+    assert first_read.timestamp <= first_sent.timestamp
+
+    request_events = spans["executor.request"].events
+    assert [event.name for event in request_events] == [
+        "executor.request.first_event_received", "executor.request.terminal_received",
+    ]
+    first_received, terminal_received = request_events
+    assert first_read.timestamp <= first_received.timestamp <= terminal_received.timestamp
+
+    sse_span = spans["run.sse"]
+    assert [event.name for event in sse_span.events] == ["run.sse.first_record_sent", "run.sse.end_sent"]
+    assert (sse_span.attributes or {})["agent_lens.sse.records_sent"] == 4
+    assert (sse_span.attributes or {})["agent_lens.outcome"] == "completed"
+    assert (spans["capture.write_result"].attributes or {})["agent_lens.outcome"] == "completed"
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_run_traces_result_write_failure_without_raw_exception(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
+    telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
+) -> None:
+    def fail_write(self: CaptureFiles, exit_code: int | None) -> None:
+        raise OSError("private-result-path")
+
+    monkeypatch.setattr(CaptureFiles, "write_result", fail_write)
+    (run_workspace / "release").touch()
+    backend, request_finished = live_http
+    response = backend.post("/runs", json={"prompt": "Read the example."})
+    assert response.status_code == 200
+    assert next_frame(iter(response.text.splitlines()[-3:])) == (
+        "end", {"exit_code": None, "error": "execution_failed"},
+    )
+    assert request_finished.wait(3)
+
+    directory = capture_directory(run_workspace)
+    assert (directory / "events.timed.jsonl").is_file()
+    assert not (directory / "result.json").exists()
+    span_exporter, log_exporter = telemetry_exports
+    spans = assert_live_span_tree(span_exporter, directory.name)
+    write_result = spans["capture.write_result"]
+    assert (write_result.attributes or {})["agent_lens.error_code"] == "capture_result_write_failed"
+    assert write_result.status.status_code is StatusCode.ERROR
+    assert not write_result.events
+    assert "private-result-path" not in str(log_exporter.get_finished_logs())
+    assert (spans["run.capture"].attributes or {})["agent_lens.outcome"] == "failed"
+    assert (spans["run.sse"].attributes or {})["agent_lens.outcome"] == "completed"
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_run_traces_paired_commands_at_their_observed_capture_offsets(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+    telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
+) -> None:
+    backend, request_finished = live_http
+    response = backend.post("/runs", json={"prompt": "measure command spans"})
+    assert response.status_code == 200
+    assert next_frame(iter(response.text.splitlines()[-3:])) == ("end", {"exit_code": 0})
+    assert request_finished.wait(3)
+
+    directory = capture_directory(run_workspace)
+    lines = (directory / "events.timed.jsonl").read_text(encoding="utf-8").splitlines()
+    records = [json.loads(line) for line in lines]
+    offsets = {
+        (record["event"]["item"]["id"], record["event"]["type"]): record["elapsed_ns"]
+        for record in records if "item" in record["event"]
+    }
+
+    span_exporter, _ = telemetry_exports
+    spans = span_exporter.get_finished_spans()
+    request_span = next(span for span in spans if span.name == "executor.request")
+    assert request_span.context is not None
+    attrs = request_span.attributes or {}
+    assert attrs["agent_lens.command.missing_start_count"] == 1
+    assert attrs["agent_lens.command.missing_completion_count"] == 1
+    commands = [span for span in spans if span.name == "codex.command"]
+    assert len(commands) == 2
+    durations = {
+        "item_1": offsets["item_1", "item.completed"] - offsets["item_1", "item.started"],
+        "item_2": offsets["item_2", "item.completed"] - offsets["item_2", "item.started"],
+    }
+    assert durations["item_1"] > durations["item_2"]
+    assert_command_span(commands[0], "item_2", durations["item_2"], request_span, "failed", 127)
+    assert_command_span(commands[1], "item_1", durations["item_1"], request_span, "completed", 0)
+    assert request_span.status.status_code is StatusCode.UNSET
+
+
+def assert_command_span(
+    span: ReadableSpan, item_id: str, duration_ns: int, request_span: ReadableSpan, status: str, exit_code: int,
+) -> None:
+    assert request_span.context is not None and span.context is not None and span.parent is not None
+    assert span.context.trace_id == request_span.context.trace_id
+    assert span.parent.span_id == request_span.context.span_id
+    assert span.start_time is not None and span.end_time is not None
+    assert span.end_time - span.start_time == duration_ns
+    attrs = span.attributes or {}
+    assert attrs["agent_lens.item_id"] == item_id
+    assert attrs["agent_lens.command.status"] == status
+    assert attrs["agent_lens.command.exit_code"] == exit_code
+    assert attrs["agent_lens.outcome"] == status
+    assert span.status.status_code is (StatusCode.ERROR if exit_code else StatusCode.UNSET)
+    assert "private-command" not in str(attrs)
+    assert "private-invalid-id" not in str(attrs)
+
 
 @pytest.mark.usefixtures("executor_socket")
 def test_run_preserves_trace_when_a_line_exceeds_the_limit(
@@ -415,3 +696,28 @@ def test_run_preserves_trace_when_a_line_exceeds_the_limit(
     trace = (directory / "events.timed.jsonl").read_text(encoding="utf-8")
     assert [json.loads(line) for line in trace.splitlines()] == [record]
     assert not (directory / "result.json").exists()
+
+
+def test_replay_logs_disconnect_after_loading_a_valid_trace(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
+    telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
+) -> None:
+    trace = run_workspace / "replay.jsonl"
+    records = [
+        {"elapsed_ns": 0, "event": {"type": "turn.started"}},
+        {"elapsed_ns": 30_000_000_000, "event": {"type": "turn.completed"}},
+    ]
+    trace.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    monkeypatch.setattr(dependencies, "REPLAY_TRACE", trace)
+    backend, request_finished = live_http
+    with backend.stream("GET", "/events") as response:
+        assert next_frame(response.iter_lines()) == ("record", records[0])
+    assert request_finished.wait(3)
+
+    span_exporter, log_exporter = telemetry_exports
+    spans = {span.name: span for span in span_exporter.get_finished_spans()}
+    assert (spans["replay.load"].attributes or {})["agent_lens.outcome"] == "completed"
+    assert (spans["replay.emit"].attributes or {})["agent_lens.outcome"] == "disconnected"
+    assert {item.log_record.body for item in log_exporter.get_finished_logs()} == {
+        "replay.load.completed", "replay.sse.disconnected",
+    }

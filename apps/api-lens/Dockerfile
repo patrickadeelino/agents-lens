@@ -15,7 +15,7 @@ COPY apps/api-lens/pyproject.toml apps/api-lens/uv.lock ./
 RUN uv sync --locked --no-dev --no-cache
 
 COPY apps/api-lens/app.py ./
-COPY apps/api-lens/src/__init__.py ./src/
+COPY apps/api-lens/src/__init__.py apps/api-lens/src/observability.py ./src/
 COPY apps/api-lens/src/api/ ./src/api/
 COPY apps/api-lens/src/application/ ./src/application/
 COPY apps/api-lens/src/domain/ ./src/domain/

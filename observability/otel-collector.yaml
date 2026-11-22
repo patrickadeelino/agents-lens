@@ -1,0 +1,45 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    timeout: 1s
+
+extensions:
+  basicauth/openobserve:
+    client_auth:
+      username: ${env:ZO_ROOT_USER_EMAIL}
+      password: ${env:ZO_ROOT_USER_PASSWORD}
+
+exporters:
+  otlp_http/openobserve/traces:
+    endpoint: http://openobserve:5080/api/default
+    auth:
+      authenticator: basicauth/openobserve
+    headers:
+      stream-name: agent_lens_traces
+  otlp_http/openobserve/logs:
+    endpoint: http://openobserve:5080/api/default
+    auth:
+      authenticator: basicauth/openobserve
+    headers:
+      stream-name: agent_lens_logs
+
+service:
+  extensions: [basicauth/openobserve]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/openobserve/traces]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/openobserve/logs]

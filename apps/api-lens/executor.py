@@ -2,36 +2,53 @@
 
 import argparse
 import asyncio
-import logging
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, suppress
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from opentelemetry.trace import Span
 
+from src.api.observability import observed_app
 from src.api.schemas import PromptRequest
+from src.api.sse import ClosingStreamingResponse
 from src.infrastructure.executor_protocol import RunError, RunExit, RunOutput
 from src.infrastructure.read_only_run import ReadOnlyRun
+from src.observability import (
+    EventProgress,
+    event_log,
+    exit_outcome,
+    finish_span,
+    operation_span,
+)
 
 MAX_EVENT_BYTES = 8 * 1024 * 1024
 
-app = FastAPI(title="Agent Lens Executor")
+app = observed_app(
+    "Agent Lens Executor", "agent-lens-executor", {("POST", "/run"): "executor.http"}, private=True,
+)
 execution_lock = asyncio.Lock()
-logger = logging.getLogger(__name__)
 
 
-async def stream_process(run: ReadOnlyRun, prompt: str) -> AsyncIterator[str]:
+async def stream_process(run: ReadOnlyRun, prompt: str) -> AsyncGenerator[str]:
     if execution_lock.locked():
-        logger.info("Executor rejected a concurrent run")
+        event_log("executor.rejected", "executor", "rejected", error_code="executor_busy")
         yield RunExit(exit_code=None).model_dump_json() + "\n"
         return
 
-    async with execution_lock, aclosing(subprocess_messages(run, prompt)) as messages:
-        async for message in messages:
-            yield message.model_dump_json() + "\n"
+    async with execution_lock:
+        with operation_span("codex.subprocess") as span:
+            first_event_sent = False
+            async with aclosing(subprocess_messages(run, prompt, span)) as messages:
+                async for message in messages:
+                    yield message.model_dump_json() + "\n"
+                    # The iterator resumes after ASGI accepts the response body.
+                    if not first_event_sent and isinstance(message, RunOutput):
+                        span.add_event("executor.stream.first_event_sent")
+                        first_event_sent = True
 
 
 async def send_prompt(stdin: asyncio.StreamWriter, prompt: str) -> None:
@@ -65,8 +82,9 @@ async def stop_process(process: asyncio.subprocess.Process, stdout: asyncio.Stre
 
 
 async def subprocess_messages(
-    run: ReadOnlyRun, prompt: str,
+    run: ReadOnlyRun, prompt: str, span: Span,
 ) -> AsyncGenerator[RunOutput | RunExit | RunError]:
+    progress = EventProgress("executor.subprocess.first_event_read", "subprocess")
     try:
         process = await asyncio.create_subprocess_exec(
             *run.command(),
@@ -77,22 +95,39 @@ async def subprocess_messages(
             stderr=asyncio.subprocess.DEVNULL,
             limit=MAX_EVENT_BYTES,
         )
-    except OSError as error:
-        logger.warning("Executor process startup failed (%s)", type(error).__name__)
+    except OSError:
+        finish_span(span, "failed", error_code="subprocess_start_failed")
+        event_log(
+            "executor.subprocess.failed", "subprocess", "failed",
+            error_code="subprocess_start_failed", started_at=progress.started_at, event_count=progress.count,
+        )
         yield RunExit(exit_code=None)
         return
 
     assert process.stdout is not None and process.stdin is not None
+    event_log("executor.subprocess.started", "subprocess", "started")
     delivery = asyncio.create_task(send_prompt(process.stdin, prompt))
     try:
         async for line in stdout_lines(process.stdout):
+            progress.advance(span)
             stdout = line.decode("utf-8").replace(run.api_key, "[REDACTED]")
             yield RunOutput(stdout=stdout)
         await delivery
-        yield RunExit(exit_code=await process.wait())
+        exit_code = await process.wait()
+        outcome, code = exit_outcome(exit_code)
+        finish_span(span, outcome, error_code=code)
+        event_log(
+            f"executor.subprocess.{outcome}", "subprocess", outcome,
+            error_code=code, started_at=progress.started_at, exit_code=exit_code, event_count=progress.count,
+        )
+        yield RunExit(exit_code=exit_code)
         return
     except asyncio.LimitOverrunError:
-        logger.warning("Codex event exceeded the stdout line limit of %d bytes", MAX_EVENT_BYTES)
+        finish_span(span, "failed", error_code="event_too_large")
+        event_log(
+            "executor.subprocess.failed", "subprocess", "failed",
+            error_code="event_too_large", started_at=progress.started_at, event_count=progress.count,
+        )
     finally:
         delivery.cancel()
         if not process.stdout.at_eof() or process.returncode is None:
@@ -105,8 +140,9 @@ async def subprocess_messages(
 async def prompt_run(request: PromptRequest) -> StreamingResponse:
     run = getattr(app.state, "read_only_run", None)
     if not isinstance(run, ReadOnlyRun):
+        event_log("executor.rejected", "executor", "rejected", error_code="executor_unconfigured")
         raise HTTPException(status_code=503, detail="Read-only executor is not configured.")
-    return StreamingResponse(
+    return ClosingStreamingResponse(
         stream_process(run, request.prompt),
         media_type="application/x-ndjson",
     )

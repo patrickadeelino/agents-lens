@@ -3,9 +3,22 @@
 from collections.abc import Iterator
 
 import httpx
+from opentelemetry.trace import Span, SpanKind
 from pydantic import TypeAdapter
 
-from src.application.capture_run import EventTooLarge, StdoutConsumer
+from src.application.capture_run import (
+    EventTooLarge,
+    ExecutorRequestFailed,
+    StdoutConsumer,
+)
+from src.observability import (
+    EventProgress,
+    event_log,
+    exit_outcome,
+    finish_span,
+    operation_span,
+    outgoing_context,
+)
 
 from .executor_protocol import RunError, RunExit, RunOutput
 
@@ -18,21 +31,49 @@ class ExecutorClient:
 
     def run(self, prompt: str, on_stdout: StdoutConsumer) -> int | None:
         """Deliver the stdout lines and return the terminal status."""
+        with operation_span("executor.request", kind=SpanKind.CLIENT) as span:
+            event_log("executor.request.started", "executor_client", "started")
+            try:
+                exit_code = self._request(prompt, on_stdout, span)
+            except httpx.HTTPError as error:
+                failure_code = executor_http_error_code(span, error)
+                finish_span(span, "failed", error_code=failure_code)
+                raise ExecutorRequestFailed(failure_code) from error
+            except EventTooLarge:
+                finish_span(span, "failed", error_code="event_too_large")
+                raise
+            except (OSError, ValueError):
+                finish_span(span, "failed", error_code="capture_stream_invalid")
+                raise
+            outcome, code = exit_outcome(exit_code)
+            finish_span(span, outcome, error_code=code)
+            return exit_code
+
+    def _request(self, prompt: str, on_stdout: StdoutConsumer, span: Span) -> int | None:
+        progress = EventProgress("executor.request.first_event_received", "executor_client")
         transport = httpx.HTTPTransport(uds=self._socket)
         timeout = httpx.Timeout(120, connect=5.0)
-        try:
-            with (
-                httpx.Client(
-                    base_url="http://executor-host", timeout=timeout, trust_env=False, transport=transport,
-                ) as client,
-                client.stream("POST", "/run", json={"prompt": prompt}) as response,
-            ):
-                return _consume_response(response, on_stdout)
-        except httpx.HTTPError as error:
-            raise ConnectionError("Executor request failed.") from error
+        with (
+            httpx.Client(
+                base_url="http://executor-host", timeout=timeout, trust_env=False, transport=transport,
+            ) as client,
+            client.stream("POST", "/run", json={"prompt": prompt}, headers=outgoing_context()) as response,
+        ):
+            return _consume_response(response, on_stdout, progress, span)
 
 
-def _consume_response(response: httpx.Response, on_stdout: StdoutConsumer) -> int | None:
+def executor_http_error_code(span: Span, error: httpx.HTTPError) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        span.set_attribute("http.response.status_code", error.response.status_code)
+        return "executor_http_error"
+    if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return "executor_unreachable"
+    return "executor_transport_error"
+
+
+def _consume_response(
+    response: httpx.Response, on_stdout: StdoutConsumer, progress: EventProgress, span: Span,
+) -> int | None:
     terminal: RunExit | RunError | None = None
 
     def stdout() -> Iterator[str]:
@@ -44,7 +85,9 @@ def _consume_response(response: httpx.Response, on_stdout: StdoutConsumer) -> in
             message = _EXECUTOR_MESSAGE.validate_json(line)
             if isinstance(message, (RunExit, RunError)):
                 terminal = message
+                span.add_event("executor.request.terminal_received")
             else:
+                progress.advance(span)
                 yield message.stdout
 
     on_stdout(stdout())

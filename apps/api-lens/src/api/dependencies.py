@@ -2,15 +2,17 @@
 
 import os
 from pathlib import Path
+from time import monotonic
 
 from fastapi import HTTPException
 
 from src.application.capture import EventCapture
 from src.application.capture_run import CaptureRun
-from src.application.replay import TimedReplay
+from src.application.replay import InvalidReplayOffsets, TimedReplay
 from src.domain.trace_reader import read_timed_trace
 from src.infrastructure.capture_files import CaptureFiles
 from src.infrastructure.executor_client import ExecutorClient
+from src.observability import bind_run_id, event_log, finish_span, operation_span
 
 from .schemas import PromptRequest
 
@@ -21,26 +23,38 @@ CAPTURE_ROOT = PROJECT_DIR / ".captures"
 
 def get_replay() -> TimedReplay:
     """Prepare the sanitized example before starting the HTTP response."""
-    try:
-        with REPLAY_TRACE.open(encoding="utf-8") as trace:
-            records = tuple(read_timed_trace(trace))
-    except (OSError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="Replay trace is unavailable.") from error
-
-    try:
-        return TimedReplay(records)
-    except ValueError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
+    started_at = monotonic()
+    with operation_span("replay.load") as span:
+        try:
+            with REPLAY_TRACE.open(encoding="utf-8") as trace:
+                records = tuple(read_timed_trace(trace))
+            replay = TimedReplay(records)
+        except (OSError, ValueError) as error:
+            code = "replay_unavailable" if isinstance(error, OSError) else "replay_invalid"
+            detail = (
+                str(error) if isinstance(error, InvalidReplayOffsets)
+                else "Replay trace is unavailable."
+            )
+            finish_span(span, "failed", error_code=code)
+            event_log("replay.load.failed", "replay", "failed", error_code=code, started_at=started_at)
+            raise HTTPException(status_code=503, detail=detail) from error
+        finish_span(span, "completed")
+        event_log("replay.load.completed", "replay", "completed", started_at=started_at)
+        return replay
 
 
 def get_prompt_capture(request: PromptRequest) -> CaptureRun:
     socket = os.environ.get("AGENT_LENS_EXECUTOR_SOCKET")
     if not socket:
+        event_log("run.rejected", "api", "rejected", error_code="executor_unconfigured")
         raise HTTPException(status_code=503, detail="Host executor socket is not configured.")
 
     try:
         output = CaptureFiles.create(CAPTURE_ROOT, prefix="codex-prompt-")
     except OSError as error:
+        event_log("run.rejected", "api", "rejected", error_code="capture_unavailable")
         raise HTTPException(status_code=503, detail="Capture directory is unavailable.") from error
 
+    bind_run_id(output.directory.name)
+    event_log("run.accepted", "api", "accepted")
     return CaptureRun(request.prompt, ExecutorClient(socket).run, EventCapture(), output)

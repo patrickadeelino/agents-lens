@@ -14,9 +14,13 @@ class EventCapture:
     def __init__(self, *, clock_ns: Callable[[], int] = monotonic_ns) -> None:
         self._clock_ns = clock_ns
 
-    def read(self, lines: Iterable[str]) -> Iterator[TimedEvent]:
+    def read(
+        self, lines: Iterable[str], *, on_start: Callable[[], None] | None = None,
+    ) -> Iterator[TimedEvent]:
         """Yield each event with nanoseconds elapsed since reading started."""
         started_at_ns = self._clock_ns()
+        if on_start is not None:
+            on_start()
         for line in lines:
             received_at_ns = self._clock_ns()
             yield TimedEvent(
@@ -30,9 +34,10 @@ class EventCapture:
         output: TextIO,
         *,
         on_record: RecordCallback | None = None,
+        on_start: Callable[[], None] | None = None,
     ) -> None:
         """Write each timed record and notify the callback after flushing it."""
-        for record in self.read(lines):
+        for record in self.read(lines, on_start=on_start):
             line = json.dumps(record.model_dump(), ensure_ascii=False)
             output.write(line + "\n")
             output.flush()
