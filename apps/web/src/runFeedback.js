@@ -56,7 +56,8 @@ export function useRunFeedback(connection) {
     const { event } = record;
     if (event.type === "item.completed" && event.item?.status === "failed") {
       const name = maskPaths(displayCommand(event.item.command) || event.item.tool, workspace);
-      announce(name ? `Ação falhou: ${name.slice(0, 100)}.` : "Uma ação falhou.");
+      const failure = name ? `${event.item.command ? "Comando" : "Ação"} falhou: ${name.slice(0, 100)}.` : "Uma ação falhou.";
+      announce(failure);
     }
   }
 

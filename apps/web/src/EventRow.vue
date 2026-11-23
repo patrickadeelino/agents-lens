@@ -43,7 +43,7 @@ watchEffect((onCleanup) => {
       <template v-else>
         <p class="run-kicker">Codex</p>
         <div
-          :id="messageId" ref="message" class="agent-message" :class="{ 'is-expanded': expanded }"
+          :id="messageId" ref="message" class="agent-message" :class="{ 'is-expanded': expanded, 'has-more': longMessage }"
           :inert="longMessage && !expanded" v-html="html"
         ></div>
         <button

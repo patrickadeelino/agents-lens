@@ -23,6 +23,7 @@ const runHeader = ref(null);
 const promptEditorOpen = ref(true);
 const submittedPrompt = ref(null);
 const timeline = ref(null);
+const inspector = ref(null);
 const replyBlock = ref(null);
 const trajectoryBar = ref(null);
 const backToTimelineButton = ref(null);
@@ -92,7 +93,7 @@ const selectedLabel = computed(() => selectedAction.value?.label === "Não confi
   ? "Resultado indisponível" : selectedAction.value?.label);
 const selectionPending = computed(() => Boolean(selectedActionKey.value && !selectedAction.value));
 const mobileMetrics = computed(() => [
-  reportedTotal.value ? `${reportedTotal.value} tokens` : null,
+  reportedTotal.value ? `${reportedTotal.value.value} tokens` : null,
   totalDuration.value,
   `${actions.value.length} ${actions.value.length === 1 ? "ação" : "ações"}`,
   `${failureCount.value} ${failureCount.value === 1 ? "falha" : "falhas"}`,
@@ -253,16 +254,27 @@ async function updateLivePosition() {
   if (!detailOpen.value && !failedOnly.value && atLatestEvent()) newEvents.value = 0;
 }
 
-async function followLatest() {
+async function followLatest(moveFocus = false) {
   const focusWasOnButton = document.activeElement?.closest(".new-events");
   failedOnly.value = false;
   following.value = busy.value;
   await nextTick();
   const last = timeline.value?.lastElementChild;
   last?.scrollIntoView({ block: "end" });
-  if (focusWasOnButton) last?.querySelector("button, summary")?.focus({ preventScroll: true });
+  if (moveFocus || focusWasOnButton) (last?.querySelector("button, summary") ?? last)?.focus({ preventScroll: true });
   lastScrollY = window.scrollY;
   newEvents.value = 0;
+}
+
+function focusInspector() {
+  if (desktop.value) inspector.value?.focus();
+  else if (selectedAction.value) jumpToAction(selectedAction.value);
+}
+
+function filterTrajectory(view) {
+  if (view !== "failures") trajectoryView.value = view;
+  failedOnly.value = view === "failures";
+  following.value = false;
 }
 
 function keepFocusedEventVisible(event) {
@@ -736,7 +748,7 @@ onUnmounted(() => {
     <div class="topbar-content">
       <span class="wordmark">Agent Lens</span>
       <div class="topbar-context">
-        <span class="workspace">Workspace de exemplo · Somente leitura</span>
+        <span class="workspace"><span class="workspace-full">Workspace de exemplo</span><span class="workspace-short">Exemplo</span> · Somente leitura</span>
         <div v-if="!promptEditorOpen && !detailOpen" class="topbar-actions">
           <button class="secondary" type="button" :disabled="busy" @click="openPromptEditor">Nova execução</button>
           <button class="link-button" type="button" :disabled="busy" @click="replay">Ver replay de exemplo</button>
@@ -810,12 +822,12 @@ onUnmounted(() => {
         </div>
         <div v-if="connectionStatus === 'Reconectando' || connectionStatus === 'Interrompida'" class="connection-notice">
           <div role="status" aria-live="off">
-          <p v-if="connectionStatus === 'Reconectando'">
-            Conexão perdida.
-            <template v-if="lastUpdateSeconds != null">Última atualização há {{ lastUpdateSeconds }} s.</template>
-            Tentando novamente. O estado dos comandos em andamento pode estar desatualizado.
-          </p>
-          <p v-else>Fluxo interrompido. Os eventos exibidos permanecem disponíveis.</p>
+            <p v-if="connectionStatus === 'Reconectando'">
+              Conexão perdida.
+              <template v-if="lastUpdateSeconds != null">Última atualização há {{ lastUpdateSeconds }} s.</template>
+              Tentando novamente. O estado dos comandos em andamento pode estar desatualizado.
+            </p>
+            <p v-else>Fluxo interrompido. Os eventos exibidos permanecem disponíveis.</p>
           </div>
           <button v-if="activeRunId" class="secondary" type="button" @click="retryConnection">Tentar agora</button>
         </div>
@@ -826,7 +838,7 @@ onUnmounted(() => {
           <p>Replay de eventos gravados. Nenhum modelo está sendo chamado.</p>
           <div class="replay-actions">
             <button id="replay" class="secondary" type="button" aria-label="Reiniciar replay" @click="replay">Reiniciar</button>
-            <button v-if="rows.length" class="secondary" type="button" :disabled="following" @click="followLatest">
+            <button v-if="rows.length" class="secondary" type="button" :disabled="following" @click="followLatest()">
               {{ busy ? following ? "Seguindo até o fim" : "Acompanhar até o fim" : "Pular para o fim" }}
             </button>
           </div>
@@ -878,8 +890,11 @@ onUnmounted(() => {
           <aside
             v-if="desktop"
             id="action-inspector"
+            ref="inspector"
             class="command-inspector"
             aria-label="Inspetor de ações"
+            tabindex="-1"
+            :data-failure="selectedAction?.failed || undefined"
             :data-command-status="(selectedAction?.command ?? selectedAction?.tool)?.status"
           >
             <template v-if="selectedAction">
@@ -934,14 +949,18 @@ onUnmounted(() => {
             <h2 id="events-title">Trajetória</h2>
             <div v-if="rows.length" class="trajectory-controls">
               <div class="event-filters" aria-label="Filtrar eventos" role="group">
-                <button type="button" :aria-pressed="trajectoryView === 'essential'" @click="trajectoryView = 'essential'; following = false">Essencial</button>
-                <button type="button" :aria-pressed="trajectoryView === 'all'" @click="trajectoryView = 'all'; following = false">Tudo</button>
-                <button type="button" :aria-pressed="failedOnly" @click="failedOnly = !failedOnly; following = false">
+                <button type="button" :aria-pressed="!failedOnly && trajectoryView === 'essential'" @click="filterTrajectory('essential')">Essencial</button>
+                <button type="button" :aria-pressed="!failedOnly && trajectoryView === 'all'" @click="filterTrajectory('all')">Tudo</button>
+                <button type="button" :aria-pressed="failedOnly" @click="filterTrajectory('failures')">
                   Falhas <span v-if="failureCount" class="failure-count">{{ failureCount }}</span>
                 </button>
               </div>
             </div>
           </div>
+          <nav v-if="rows.length" class="trajectory-shortcuts" aria-label="Atalhos da trajetória">
+            <a href="#timeline" @click.prevent="followLatest(true)">Ir ao último evento</a>
+            <a v-if="selectedAction" href="#action-inspector" @click.prevent="focusInspector">Ir para o detalhe</a>
+          </nav>
           <div v-if="historyBefore != null" class="history-controls">
             <button
               type="button"
@@ -963,7 +982,7 @@ onUnmounted(() => {
               :id="`timeline-${entry.key}`"
               :key="entry.key"
               v-memo="[entry, desktop, captureEnded, highlightedReply?.key === entry.key, entry.technicalEvents ? selectedActionKey : selectedActionKey === entry.key]"
-              :tabindex="entry.markdown ? -1 : undefined"
+              tabindex="-1"
               :data-technical-key="entry.technicalEvents?.[0].key"
               :data-event-type="entry.event?.type"
               :data-command-id="entry.command?.id"
@@ -990,7 +1009,7 @@ onUnmounted(() => {
             </li>
           </ol>
           <div v-if="newEvents && !following && !failedOnly" class="new-events">
-            <button type="button" class="secondary" @click="followLatest">
+            <button type="button" class="secondary" @click="followLatest()">
               <span aria-hidden="true">↓</span> {{ newEvents === 1 ? "1 novo evento" : `${newEvents} novos eventos` }}
             </button>
           </div>
@@ -1008,6 +1027,7 @@ onUnmounted(() => {
 
     <section
       v-if="detailOpen && selectedAction"
+      id="action-inspector"
       class="narrow-command-detail"
       aria-labelledby="command-detail-title"
       @keydown.esc.prevent="closeMobileDetail"
@@ -1020,7 +1040,7 @@ onUnmounted(() => {
       >
         <span aria-hidden="true">←</span> Trajetória
       </button>
-      <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool)?.status">
+      <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool)?.status" :data-failure="selectedAction.failed || undefined">
         <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" mobile />
         <ActionDetails
           :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot"
