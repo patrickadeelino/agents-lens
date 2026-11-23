@@ -914,8 +914,8 @@ onUnmounted(() => {
                   >
                     <span class="status-symbol" aria-hidden="true">{{ entry.icon }}</span>
                     <span class="visually-hidden">{{ entry.label }}</span>
-                    <code v-if="entry.command" :title="entry.commandText">{{ entry.commandText || "Comando" }}</code>
-                    <span v-else class="index-title">{{ entry.tool.name }}</span>
+                    <code v-if="entry.command && !entry.title" :title="entry.commandText">{{ entry.commandText || "Comando" }}</code>
+                    <span v-else class="index-title" :title="actionTitle(entry)">{{ actionTitle(entry) }}</span>
                   </button>
                 </li>
               </ol>
