@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandTitle, describeEvent, trajectoryRows } from "../src/eventPresentation.js";
+import { commandTitle, describeEvent, displayCommand, formatDuration, formatOffset, trajectoryRows } from "../src/eventPresentation.js";
 
 test("Essential folds only adjacent technical events and leaves failures inspectable", () => {
   const rows = [
@@ -18,6 +18,24 @@ test("Essential folds only adjacent technical events and leaves failures inspect
   ]);
   assert.deepEqual(trajectoryRows(rows, "failures"), rows.slice(4));
   assert.deepEqual(trajectoryRows(rows, "all"), rows);
+});
+
+test("shell display preserves literal quotes and unwraps only a single literal argument", () => {
+  const raw = "printf '%s' \"abc\"";
+  assert.equal(displayCommand(raw), raw);
+  assert.equal(displayCommand('/usr/bin/zsh -lc "cat \\"a b\\""'), 'cat "a b"');
+  assert.equal(displayCommand("bash -lc 'printf '\\''%s'\\'' abc'"), "printf '%s' abc");
+  assert.equal(displayCommand("sh -c 'printf \"%s\" \"$HOME\"'"), 'printf "%s" "$HOME"');
+  assert.equal(displayCommand('bash -lc "echo $HOME"'), 'bash -lc "echo $HOME"');
+  assert.equal(displayCommand("sh -c 'echo hi' alternate"), "sh -c 'echo hi' alternate");
+});
+
+test("duration and relative start use the units in the approved screens", () => {
+  assert.equal(formatDuration(700_000), "< 1 ms");
+  assert.equal(formatDuration(200_900_000), "200 ms");
+  assert.equal(formatDuration(1_200_000_000), "1,2 s");
+  assert.equal(formatOffset(200_000_000), "+0,20 s");
+  assert.equal(formatDuration(undefined), null);
 });
 
 test("plain action titles preserve ambiguity for complex shell commands", () => {

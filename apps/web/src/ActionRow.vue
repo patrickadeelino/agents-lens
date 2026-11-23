@@ -1,5 +1,5 @@
 <script setup>
-import { firstLine } from "./eventPresentation.js";
+import { displayCommand, firstLine } from "./eventPresentation.js";
 
 defineProps({
   entry: { type: Object, required: true },
@@ -20,8 +20,8 @@ defineEmits(["select"]);
     <span class="command-offset" title="Primeira observação na captura">{{ entry.offset }}</span>
     <span class="status-symbol action-marker" aria-hidden="true">{{ entry.icon }}</span>
     <span class="command-content">
-      <span v-if="entry.title || entry.tool" class="command-title">{{ entry.title || entry.tool.name }}</span>
-      <code v-if="entry.command" class="command-literal">{{ entry.command.command || "Comando" }}</code>
+      <code v-if="entry.command" class="command-literal">{{ displayCommand(entry.command.command) || "Comando" }}</code>
+      <span v-else class="command-title">{{ entry.tool.name }}</span>
     </span>
     <span class="command-status">{{ entry.label }}</span>
     <span v-if="entry.duration" class="duration" title="Duração observada">{{ entry.duration }}</span>

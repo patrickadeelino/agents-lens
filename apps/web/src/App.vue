@@ -608,7 +608,7 @@ onUnmounted(() => {
       <header v-else ref="runHeader" class="run-summary" tabindex="-1">
         <div class="run-heading">
           <div class="run-identity">
-            <p class="run-kicker">Codex CLI <template v-if="activeRunId"> · {{ activeRunId }}</template></p>
+            <p class="run-kicker">Codex CLI <template v-if="activeRunId"> · <code class="run-id">{{ activeRunId }}</code></template></p>
             <h1>Execução do agente</h1>
           </div>
           <div class="run-statuses" role="status">

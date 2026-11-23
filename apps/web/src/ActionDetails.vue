@@ -75,6 +75,6 @@ async function copyOutput() {
         <pre v-if="jsonOpen" tabindex="0" aria-label="Eventos JSON da ação">{{ JSON.stringify(entry.command?.records ?? entry.records, null, 2) }}</pre>
       </details>
     </details>
-    <p v-if="entry.duration" class="measurement-note">A duração observada é o intervalo entre a chegada dos eventos de início e de conclusão.</p>
+    <p v-if="entry.duration" class="measurement-note">A duração mede o intervalo entre a chegada dos eventos de início e de conclusão.</p>
   </div>
 </template>

@@ -1,5 +1,6 @@
 const numbers = new Intl.NumberFormat("pt-BR");
-const decimals = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
+const seconds = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const offsets = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const eventLabels = new Map([
   ["thread.started", "Sessão iniciada"],
   ["turn.started", "Processamento do prompt iniciado"],
@@ -41,19 +42,34 @@ const collaborationLabels = new Map([
 
 export function formatDuration(ns) {
   if (!Number.isFinite(ns) || ns < 0) return null;
-  if (ns === 0) return "0 ms";
-  if (ns < 1_000_000) return ns < 1_000 ? `${numbers.format(ns)} ns` : `${decimals.format(ns / 1_000)} µs`;
-  if (ns < 999_950_000) return `${decimals.format(ns / 1_000_000)} ms`;
-  if (ns < 59_950_000_000) return `${decimals.format(ns / 1_000_000_000)} s`;
-  const seconds = Math.round(ns / 1_000_000_000);
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return remainder ? `${numbers.format(minutes)} min ${remainder} s` : `${numbers.format(minutes)} min`;
+  if (ns < 1_000_000) return "< 1 ms";
+  if (ns < 1_000_000_000) return `${Math.floor(ns / 1_000_000)} ms`;
+  return `${seconds.format(ns / 1_000_000_000)} s`;
 }
 
 export function formatOffset(ns) {
-  const time = formatDuration(ns);
-  return time === null ? null : `+${time}`;
+  return Number.isFinite(ns) && ns >= 0 ? `+${offsets.format(ns / 1_000_000_000)} s` : null;
+}
+
+export function displayCommand(raw) {
+  if (typeof raw !== "string") return raw;
+  const wrapper = /^(?:\/(?:[\w.-]+\/)*)?(?:bash|zsh|sh)[ \t]+-(?:lc|cl|c)[ \t]+([\s\S]+)$/.exec(raw);
+  if (!wrapper) return raw;
+
+  const argument = wrapper[1].trimEnd();
+  if (/^[\w./-]+$/.test(argument)) return argument;
+  const fragments = /'([^']*)'|"((?:[^"\\$`]|\\[\s\S])*)"|\\([^\r\n])/gy;
+  let command = "";
+  for (let position = 0; position < argument.length;) {
+    const fragment = fragments.exec(argument);
+    if (!fragment) return raw;
+    const doubleQuoted = fragment[2]?.replace(/\\([\\"$`\n])/g, (_, character) => (
+      character === "\n" ? "" : character
+    ));
+    command += fragment[1] ?? doubleQuoted ?? fragment[3];
+    position = fragments.lastIndex;
+  }
+  return command;
 }
 
 export function statusPresentation(status) {
