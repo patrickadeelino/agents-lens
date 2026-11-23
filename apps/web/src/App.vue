@@ -6,7 +6,7 @@ import EventRow from "./EventRow.vue";
 import ReplyHighlight from "./ReplyHighlight.vue";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import {
-  commandTitle, describeEvent, describeTool, errorMessage, firstLine, formatDuration, formatOffset,
+  commandTitle, describeEvent, describeTool, displayCommand, errorMessage, firstLine, formatDuration, formatOffset,
   reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
 } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
@@ -67,7 +67,10 @@ const desktopQuery = window.matchMedia("(min-width: 1100px)");
 const desktop = ref(desktopQuery.matches);
 const selectedActionKey = ref(null);
 const selectedAction = computed(() => entries.get(selectedActionKey.value));
-const selectedTitle = computed(() => selectedAction.value ? actionTitle(selectedAction.value) : "");
+const selectedTitle = computed(() => {
+  const entry = selectedAction.value;
+  return entry?.command ? displayCommand(entry.command.command) || "Comando" : entry ? actionTitle(entry) : "";
+});
 const selectionPending = computed(() => Boolean(selectedActionKey.value && !selectedAction.value));
 let controller;
 let historyController;
@@ -696,7 +699,7 @@ onUnmounted(() => {
                 <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
                 {{ selectedAction.icon ? selectedAction.label : selectedAction.failed ? "Falhou" : selectedAction.label }}
               </p>
-              <h2>{{ selectedTitle }}</h2>
+              <h2 :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h2>
             </div>
             <ActionDetails v-if="selectedAction" :key="selectedAction.key" :entry="selectedAction" />
             <section v-else class="run-overview">
@@ -821,7 +824,7 @@ onUnmounted(() => {
             <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
             {{ selectedAction.label }}
           </p>
-          <h1 id="command-detail-title">{{ selectedTitle }}</h1>
+          <h1 id="command-detail-title" :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h1>
         </header>
         <ActionDetails :key="selectedAction.key" :entry="selectedAction" />
       </div>

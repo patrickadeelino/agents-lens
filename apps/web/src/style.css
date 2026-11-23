@@ -446,21 +446,22 @@ summary:hover { background: var(--surface-muted); }
 
 .action-section, .action-technical, .command-metadata { border-bottom: 1px solid var(--line); }
 .action-section { padding: 10px 16px; }
-.action-section h3 { margin-block-end: 5px; font-size: .875rem; }
+.action-section h3 { margin-block-end: 6px; }
 .action-section p, .action-technical p { color: var(--ink-muted); font-size: .875rem; }
 .action-section p:not(:last-child) { margin-block-end: 6px; }
-.action-section pre, .action-json pre { max-height: 18rem; overflow: auto; }
+.action-section pre, .action-json pre, .action-technical pre { max-height: 18rem; overflow: auto; }
 .action-section pre { padding: 8px 10px; border-radius: 4px; }
 .action-technical p { padding: 0 16px 8px; }
-.action-technical summary, .long-output summary {
+.action-technical summary, .action-json summary {
   color: var(--ink-muted);
   font: inherit;
   font-size: .875rem;
 }
-.long-output summary { padding: 4px 0; }
-.long-output[open] + .output-preview { display: none; }
-.inspector-actions { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 10px; margin-block-start: 6px; }
+.output-toggle { margin-block-start: 6px; }
+.inspector-actions { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 14px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
 .inspector-actions .link-button, .action-json summary { color: var(--accent-link); }
+.action-json summary { padding: 2px 0; }
+.action-json[open] { flex: 1 1 100%; min-width: 0; }
 .inspector-actions span, .measurement-note { color: var(--ink-muted); font-size: .75rem; }
 .measurement-note { padding: 10px 16px; background: var(--surface-muted); }
 
@@ -500,9 +501,10 @@ summary:hover { background: var(--surface-muted); }
 .narrow-command-heading h1 {
   grid-column: 1 / -1;
   margin: 0;
-  font: 600 1.125rem/1.4 var(--font-code);
+  font-size: 1.25rem;
   overflow-wrap: anywhere;
 }
+.inspector-command { font-family: var(--font-code); white-space: pre-wrap; }
 
 .run-sidebar { min-width: 0; }
 .run-sidebar:empty { display: none; }
@@ -582,6 +584,7 @@ pre {
     padding: 14px 16px;
   }
   .inspector-heading h2 { grid-column: 1 / -1; font-size: 1.15rem; overflow-wrap: anywhere; }
+  .inspector-heading h2.inspector-command { font-size: 1.25rem; }
 }
 
 @media (forced-colors: active) {
