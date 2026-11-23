@@ -7,7 +7,7 @@ import ReplyHighlight from "./ReplyHighlight.vue";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import {
   commandTitle, describeEvent, describeTool, displayCommand, errorMessage, firstLine, formatDuration, formatOffset, maskPaths,
-  reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
+  observedRunDuration, reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
 } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
 import { recentRuns, rememberRun } from "./recentRuns.js";
@@ -16,6 +16,8 @@ import { CommandTimeline } from "./timeline.js";
 
 const prompt = ref("");
 const promptInput = ref(null);
+const topbar = ref(null);
+const topbarHeight = ref(0);
 const runHeader = ref(null);
 const promptEditorOpen = ref(true);
 const submittedPrompt = ref(null);
@@ -67,6 +69,16 @@ const failureReason = computed(() => maskPaths(resultDetail.value
 const tokens = shallowRef([]);
 const reportedTotal = computed(() => tokenSummary(tokens.value));
 const captureEnded = ref(false);
+const firstOffset = ref(null);
+const lastOffset = ref(null);
+const lastArrival = ref(null);
+const now = ref(0);
+const ticking = computed(() => !replayMode.value && busy.value && !captureEnded.value
+  && connectionStatus.value === "Recebendo eventos"
+  && (runStatus.value === "Em andamento" || runStatus.value === "Aguardando resultado"));
+const totalDuration = computed(() => observedRunDuration(firstOffset.value, lastOffset.value,
+  ticking.value && lastArrival.value != null ? now.value - lastArrival.value : 0));
+const durationLabel = computed(() => historyBefore.value != null ? "trecho carregado" : "medida pelo app");
 const lastReply = shallowRef(null);
 const highlightedReply = computed(() => captureEnded.value ? lastReply.value : null);
 const desktopQuery = window.matchMedia("(min-width: 901px)");
@@ -82,9 +94,10 @@ const selectedLabel = computed(() => selectedAction.value?.label === "Não confi
   ? "Resultado indisponível" : selectedAction.value?.label);
 const selectionPending = computed(() => Boolean(selectedActionKey.value && !selectedAction.value));
 const mobileMetrics = computed(() => [
-  reportedTotal.value ? `${reportedTotal.value} ${reportedTotal.value === "1" ? "token" : "tokens"}` : null,
-  actions.value.length ? `${actions.value.length} ${actions.value.length === 1 ? "ação" : "ações"}` : null,
-  failureCount.value ? `${failureCount.value} ${failureCount.value === 1 ? "falha" : "falhas"}` : null,
+  reportedTotal.value ? `${reportedTotal.value} tokens` : null,
+  totalDuration.value,
+  `${actions.value.length} ${actions.value.length === 1 ? "ação" : "ações"}`,
+  `${failureCount.value} ${failureCount.value === 1 ? "falha" : "falhas"}`,
 ].filter(Boolean).join(" · "));
 let controller;
 let historyController;
@@ -94,6 +107,15 @@ let commandTimeline = new CommandTimeline();
 let lastScrollY = window.scrollY;
 let refreshScheduled = false;
 let replayOperation;
+let topbarObserver;
+
+watch(ticking, (active, _, onCleanup) => {
+  if (!active) return;
+  const tick = () => { now.value = performance.now(); };
+  tick();
+  const timer = setInterval(tick, 100);
+  onCleanup(() => clearInterval(timer));
+});
 
 watch(runStatus, (current) => {
   if (/^Falh|^Replay concluído|^Concluída|^Resultado não confirmado/.test(current)) announce(current);
@@ -179,6 +201,7 @@ function appendRecord(record, eventId, { live = false, commands = null } = {}) {
   const accepted = acceptRecord(record, eventId, commands);
   if (!accepted) return false;
   captureRecords.push(accepted);
+  observeOffset(record, live);
   projectRecord(accepted);
   if (live) {
     feedback.observe(record, workspaceRoot.value);
@@ -186,6 +209,15 @@ function appendRecord(record, eventId, { live = false, commands = null } = {}) {
     updateLivePosition();
   }
   return true;
+}
+
+function observeOffset(record, live) {
+  const offset = record.elapsed_ns;
+  if (!Number.isFinite(offset) || offset < 0) return;
+  firstOffset.value = Math.min(firstOffset.value ?? offset, offset);
+  if (lastOffset.value != null && offset < lastOffset.value) return;
+  lastOffset.value = offset;
+  if (live) lastArrival.value = now.value = performance.now();
 }
 
 function finishActions() {
@@ -312,6 +344,7 @@ async function loadEarlierEvents() {
     const focused = document.activeElement;
     const earlier = page.events.map(({ record, event_id: id }) => acceptRecord(record, id, page.commands)).filter(Boolean);
     captureRecords = [...earlier, ...captureRecords];
+    for (const { record } of earlier) observeOffset(record, false);
     historyBefore.value = page.next_before;
     entries.clear();
     lastReply.value = null;
@@ -484,6 +517,7 @@ async function display({ run, connection }, operation, formatErrorLabel) {
   historyError.value = "";
   captureRecords = [];
   workspaceRoot.value = null;
+  firstOffset.value = lastOffset.value = lastArrival.value = null;
   captureEnded.value = false;
   lastReply.value = null;
   feedback.reset();
@@ -655,6 +689,8 @@ function reopen(runId) {
 }
 
 onMounted(() => {
+  topbarObserver = new ResizeObserver(() => { topbarHeight.value = topbar.value.offsetHeight; });
+  topbarObserver.observe(topbar.value);
   desktopQuery.addEventListener("change", updateDesktop);
   window.addEventListener("scroll", markVisibleEvents, { passive: true });
   window.addEventListener("hashchange", synchronizeHash);
@@ -663,6 +699,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  topbarObserver?.disconnect();
   desktopQuery.removeEventListener("change", updateDesktop);
   window.removeEventListener("scroll", markVisibleEvents);
   window.removeEventListener("hashchange", synchronizeHash);
@@ -672,20 +709,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <header class="topbar">
+  <header ref="topbar" class="topbar">
     <div class="topbar-content">
       <span class="wordmark">Agent Lens</span>
       <div class="topbar-context">
         <span class="workspace">Workspace de exemplo · Somente leitura</span>
         <div v-if="!promptEditorOpen && !detailOpen" class="topbar-actions">
           <button class="secondary" type="button" :disabled="busy" @click="openPromptEditor">Nova execução</button>
-          <button v-if="!replayMode" class="link-button" type="button" :disabled="busy" @click="replay">Ver replay de exemplo</button>
+          <button class="link-button" type="button" :disabled="busy" @click="replay">Ver replay de exemplo</button>
         </div>
       </div>
     </div>
   </header>
 
-  <main class="content" :class="{ 'composer-content': promptEditorOpen && !detailOpen }">
+  <main class="content" :class="{ 'composer-content': promptEditorOpen && !detailOpen }" :style="{ '--topbar-height': `${topbarHeight}px` }">
     <p class="visually-hidden" role="status">{{ announcement }}</p>
     <div v-show="!detailOpen">
       <section v-if="promptEditorOpen" class="run-composer" aria-labelledby="composer-title">
@@ -778,18 +815,20 @@ onUnmounted(() => {
           </summary>
           <p>{{ submittedPrompt }}</p>
         </details>
-        <div v-if="actions.length || reportedTotal || failureCount" class="run-stats">
+        <div class="run-stats">
           <p v-if="reportedTotal"><strong>{{ reportedTotal.value }}</strong> {{ reportedTotal.label }}</p>
-          <p v-if="actions.length">
+          <p v-if="totalDuration"><strong>{{ totalDuration }}</strong> duração · {{ durationLabel }}</p>
+          <p>
             <strong>{{ actions.length }}</strong> {{ actions.length === 1 ? "ação" : "ações" }}
             <template v-if="historyBefore != null"> {{ actions.length === 1 ? "carregada" : "carregadas" }}</template>
             <span v-if="busy && !captureEnded && activeAction" class="run-active-action"> · Em andamento <strong>{{ actionTitle(activeAction) }}</strong></span>
           </p>
-          <p v-if="failureCount"><strong>{{ failureCount }}</strong> {{ failureCount === 1 ? "falha" : "falhas" }}</p>
+          <p><strong>{{ failureCount }}</strong> {{ failureCount === 1 ? "falha" : "falhas" }}</p>
         </div>
-        <details v-if="mobileMetrics || tokens.length" class="mobile-metrics">
-          <summary>{{ mobileMetrics || "Métricas" }}</summary>
+        <details class="mobile-metrics">
+          <summary>{{ mobileMetrics }}</summary>
           <dl>
+            <div v-if="totalDuration"><dt>Duração · {{ durationLabel }}</dt><dd>{{ totalDuration }}</dd></div>
             <div><dt>Ações carregadas</dt><dd>{{ actions.length }}</dd></div>
             <div><dt>Falhas carregadas</dt><dd>{{ failureCount }}</dd></div>
             <div v-for="token in tokens" :key="token.field">

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandTitle, describeEvent, displayCommand, displayValue, formatDuration, formatOffset, maskPaths, trajectoryRows } from "../src/eventPresentation.js";
+import { commandTitle, describeEvent, displayCommand, displayValue, formatDuration, formatOffset, maskPaths, observedRunDuration, trajectoryRows } from "../src/eventPresentation.js";
 
 test("Essential folds only adjacent technical events and leaves failures inspectable", () => {
   const rows = [
@@ -49,6 +49,12 @@ test("duration and relative start use the units in the approved screens", () => 
   assert.equal(formatDuration(1_200_000_000), "1,2 s");
   assert.equal(formatOffset(200_000_000), "+0,20 s");
   assert.equal(formatDuration(undefined), null);
+});
+
+test("run duration uses capture offsets and can add time since the live arrival", () => {
+  assert.equal(observedRunDuration(8_000_000_000, 9_200_000_000), "1,2 s");
+  assert.equal(observedRunDuration(8_000_000_000, 9_200_000_000, 800), "2,0 s");
+  assert.equal(observedRunDuration(null, 9_200_000_000), null);
 });
 
 test("plain action titles preserve ambiguity for complex shell commands", () => {

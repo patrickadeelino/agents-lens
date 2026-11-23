@@ -35,7 +35,11 @@ h1, h2, h3, p, dl, dd { margin: 0; }
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   border-bottom: 1px solid var(--line);
+  background: var(--bg);
 }
 
 .topbar-content, .content {
@@ -259,7 +263,7 @@ button:disabled { opacity: .55; cursor: default; }
 
 .events-heading {
   position: sticky;
-  top: 0;
+  top: var(--topbar-height);
   z-index: 2;
   display: flex;
   align-items: center;
@@ -585,11 +589,11 @@ pre {
   .run-sidebar {
     grid-area: sidebar;
     position: sticky;
-    top: 16px;
+    top: calc(var(--topbar-height) + 16px);
     display: flex;
     flex-direction: column;
     gap: 10px;
-    max-height: calc(100dvh - 32px);
+    max-height: calc(100dvh - var(--topbar-height) - 32px);
   }
   .run-sidebar .action-index { flex: none; margin-block-end: 0; }
   .command-inspector {

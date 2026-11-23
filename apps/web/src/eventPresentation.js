@@ -51,6 +51,11 @@ export function formatOffset(ns) {
   return Number.isFinite(ns) && ns >= 0 ? `+${offsets.format(ns / 1_000_000_000)} s` : null;
 }
 
+export function observedRunDuration(firstNs, lastNs, sinceLastMs = 0) {
+  if (!Number.isFinite(firstNs) || !Number.isFinite(lastNs) || firstNs > lastNs) return null;
+  return formatDuration(lastNs - firstNs + Math.max(0, sinceLastMs) * 1_000_000);
+}
+
 export function displayCommand(raw) {
   if (typeof raw !== "string") return raw;
   const wrapper = /^(?:\/(?:[\w.-]+\/)*)?(?:bash|zsh|sh)[ \t]+-(?:lic|lc|cl|c)[ \t]+([\s\S]+)$/.exec(raw);
