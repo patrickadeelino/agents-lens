@@ -3,7 +3,9 @@ import { computed, ref, useId } from "vue";
 
 const props = defineProps({
   entry: { type: Object, required: true },
+  terminal: Boolean,
 });
+const emit = defineEmits(["announce"]);
 
 const input = computed(() => props.entry.tool?.input);
 const status = computed(() => (props.entry.command ?? props.entry.tool)?.status);
@@ -30,6 +32,7 @@ async function copyOutput() {
   } catch {
     copyStatus.value = "Não foi possível copiar a saída.";
   }
+  emit("announce", copyStatus.value);
 }
 </script>
 
@@ -53,7 +56,9 @@ async function copyOutput() {
         {{ capturedText ? "Saída parcial. A ação está em andamento." : "Aguardando saída." }}
       </p>
       <p v-if="status === 'result_unconfirmed'">
-        {{ entry.command ? "A execução terminou sem enviar o resultado deste comando." : "A execução terminou sem enviar o resultado desta ação." }}
+        {{ !terminal ? "Resultado indisponível até o momento." : entry.command
+          ? "A execução terminou sem enviar o resultado deste comando."
+          : "A execução terminou sem enviar o resultado desta ação." }}
       </p>
       <pre v-if="capturedText" :id="outputId" tabindex="0" :aria-label="longOutput && !outputOpen ? 'Prévia da saída' : 'Saída capturada'">{{ longOutput && !outputOpen ? preview + "…" : capturedText }}</pre>
       <button v-if="longOutput" type="button" class="link-button output-toggle" :aria-controls="outputId" :aria-expanded="outputOpen" @click="outputOpen = !outputOpen">

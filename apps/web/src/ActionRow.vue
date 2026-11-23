@@ -6,12 +6,15 @@ const props = defineProps({
   entry: { type: Object, required: true },
   desktop: Boolean,
   selected: Boolean,
+  terminal: Boolean,
 });
 defineEmits(["select"]);
 const name = computed(() => props.entry.command
   ? displayCommand(props.entry.command.command) || "Comando" : props.entry.tool.name);
+const label = computed(() => props.entry.label === "Não confirmado" && !props.terminal
+  ? "Resultado indisponível" : props.entry.label);
 const accessibleName = computed(() => [
-  name.value, props.entry.label,
+  name.value, label.value,
   props.entry.offset ? `início ${props.entry.offset.slice(1)}` : null,
   props.entry.duration,
 ].filter(Boolean).join(", "));
@@ -32,7 +35,7 @@ const accessibleName = computed(() => [
       <code v-if="entry.command" class="command-literal" :title="name">{{ name }}</code>
       <span v-else class="command-title">{{ name }}</span>
     </span>
-    <span class="command-status">{{ entry.label }}</span>
+    <span class="command-status">{{ label }}</span>
     <span v-if="entry.duration" class="duration" title="Duração observada">{{ entry.duration }}</span>
     <span v-if="entry.preview" class="failure-preview">{{ entry.preview }}</span>
     <span v-else-if="entry.tool && (entry.failed || entry.tool.preview)" class="failure-preview">

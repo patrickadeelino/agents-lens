@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowReactive, shallowRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowReactive, shallowRef, watch } from "vue";
 import ActionDetails from "./ActionDetails.vue";
 import ActionRow from "./ActionRow.vue";
 import EventRow from "./EventRow.vue";
@@ -10,6 +10,8 @@ import {
   reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
 } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
+import { recentRuns, rememberRun } from "./recentRuns.js";
+import { useRunFeedback } from "./runFeedback.js";
 import { CommandTimeline } from "./timeline.js";
 
 const prompt = ref("");
@@ -29,13 +31,14 @@ const failedOnly = ref(false);
 const visibleRows = computed(() => trajectoryRows(rows.value, failedOnly.value ? "failures" : trajectoryView.value));
 const failureCount = computed(() => rows.value.filter((entry) => entry.failed).length);
 const actions = computed(() => rows.value.filter((entry) => entry.command || entry.tool));
-const unconfirmedCount = computed(() => actions.value.filter((entry) =>
-  (entry.command ?? entry.tool).status === "result_unconfirmed").length);
+const unconfirmedCount = computed(() => captureEnded.value ? actions.value.filter((entry) =>
+  (entry.command ?? entry.tool).status === "result_unconfirmed").length : 0);
 const activeAction = computed(() => actions.value.findLast((entry) =>
   (entry.command ?? entry.tool).status === "in_progress"));
 const newEvents = ref(0);
 const following = ref(false);
 const activeRunId = ref(null);
+const recentRunIds = ref(recentRuns());
 const historyBefore = ref(null);
 const loadingHistory = ref(false);
 const historyError = ref("");
@@ -44,6 +47,8 @@ const busy = ref(false);
 const replayMode = ref(false);
 const runStatus = ref("Aguardando execução");
 const connectionStatus = ref("Inativa");
+const feedback = useRunFeedback(connectionStatus);
+const { announcement, lastUpdateSeconds, recovered, announce } = feedback;
 const connectionLabel = computed(() => {
   if (replayMode.value) return "Replay";
   return ({
@@ -63,15 +68,23 @@ const reportedTotal = computed(() => tokenSummary(tokens.value));
 const captureEnded = ref(false);
 const lastReply = shallowRef(null);
 const highlightedReply = computed(() => captureEnded.value ? lastReply.value : null);
-const desktopQuery = window.matchMedia("(min-width: 1100px)");
+const desktopQuery = window.matchMedia("(min-width: 901px)");
 const desktop = ref(desktopQuery.matches);
+const linkedCall = ref(callFromHash());
 const selectedActionKey = ref(null);
 const selectedAction = computed(() => entries.get(selectedActionKey.value));
 const selectedTitle = computed(() => {
   const entry = selectedAction.value;
   return entry?.command ? displayCommand(entry.command.command) || "Comando" : entry ? actionTitle(entry) : "";
 });
+const selectedLabel = computed(() => selectedAction.value?.label === "Não confirmado" && !captureEnded.value
+  ? "Resultado indisponível" : selectedAction.value?.label);
 const selectionPending = computed(() => Boolean(selectedActionKey.value && !selectedAction.value));
+const mobileMetrics = computed(() => [
+  reportedTotal.value ? `${reportedTotal.value} ${reportedTotal.value === "1" ? "token" : "tokens"}` : null,
+  actions.value.length ? `${actions.value.length} ${actions.value.length === 1 ? "ação" : "ações"}` : null,
+  failureCount.value ? `${failureCount.value} ${failureCount.value === 1 ? "falha" : "falhas"}` : null,
+].filter(Boolean).join(" · "));
 let controller;
 let historyController;
 let captureRecords = [];
@@ -80,6 +93,11 @@ let commandTimeline = new CommandTimeline();
 let lastScrollY = window.scrollY;
 let refreshScheduled = false;
 let replayOperation;
+
+watch(runStatus, (current) => {
+  if (/^Falh|^Replay concluído|^Concluída|^Resultado não confirmado/.test(current)) announce(current);
+});
+watch(historyError, (message) => { if (message) announce(message); });
 
 function commandKey(id) {
   return `command:${id}`;
@@ -158,6 +176,7 @@ function appendRecord(record, eventId, { live = false, commands = null } = {}) {
   captureRecords.push(accepted);
   projectRecord(accepted);
   if (live) {
+    feedback.observe(record);
     if (!following.value) newEvents.value++;
     updateLivePosition();
   }
@@ -197,15 +216,14 @@ async function updateLivePosition() {
   if (!detailOpen.value && !failedOnly.value && atLatestEvent()) newEvents.value = 0;
 }
 
-async function toggleFollowing() {
-  if (following.value) {
-    following.value = false;
-    return;
-  }
+async function followLatest() {
+  const focusWasOnButton = document.activeElement?.closest(".new-events");
   failedOnly.value = false;
   following.value = busy.value;
   await nextTick();
-  timeline.value?.lastElementChild?.scrollIntoView({ block: "end" });
+  const last = timeline.value?.lastElementChild;
+  last?.scrollIntoView({ block: "end" });
+  if (focusWasOnButton) last?.querySelector("button, summary")?.focus({ preventScroll: true });
   lastScrollY = window.scrollY;
   newEvents.value = 0;
 }
@@ -330,7 +348,17 @@ async function selectAction(entry, trigger) {
   selectedActionKey.value = entry.key;
   rememberSelection(entry);
   if (desktop.value) return;
+  const id = callId(entry);
+  if (linkedCall.value !== id) {
+    const url = new URL(window.location.href);
+    url.hash = new URLSearchParams({ call: id }).toString();
+    window.history.pushState({ agentLensDetail: true }, "", url);
+    linkedCall.value = id;
+  }
+  await openMobileDetail(trigger, true);
+}
 
+async function openMobileDetail(trigger, focus) {
   returnPosition.value = {
     trigger,
     scrollY: window.scrollY,
@@ -338,7 +366,7 @@ async function selectAction(entry, trigger) {
   };
   await nextTick();
   window.scrollTo(0, 0);
-  backToTimelineButton.value?.focus({ preventScroll: true });
+  if (focus) backToTimelineButton.value?.focus({ preventScroll: true });
 }
 
 async function returnToTimeline() {
@@ -357,12 +385,60 @@ async function returnToTimeline() {
   }
 }
 
-function saveRunId(runId) {
+function callId(entry) {
+  return entry.command?.id ?? (entry.tool ? entry.event?.item?.id : null) ?? entry.key;
+}
+
+function callFromHash() {
+  return new URLSearchParams(window.location.hash.slice(1)).get("call");
+}
+
+function retryConnection() {
+  if (activeRunId.value) window.location.reload();
+}
+
+watch([linkedCall, rows, desktop, promptEditorOpen], async () => {
+  if (!linkedCall.value || desktop.value || promptEditorOpen.value || detailOpen.value) return;
+  const entry = rows.value.find((row) => callId(row) === linkedCall.value);
+  if (!entry) return;
+  if (entry.technical) trajectoryView.value = "all";
+  if (!entry.failed) failedOnly.value = false;
+  await nextTick();
+  if (detailOpen.value || desktop.value || callId(entry) !== linkedCall.value) return;
+  const trigger = document.getElementById(`timeline-${entry.key}`)?.querySelector("button");
+  if (!trigger) return;
+  following.value = false;
+  selectedActionKey.value = entry.key;
+  openMobileDetail(trigger, false);
+});
+
+function synchronizeHash() {
+  linkedCall.value = callFromHash();
+  if (!linkedCall.value) returnToTimeline();
+}
+
+function closeMobileDetail() {
+  if (window.history.state?.agentLensDetail) {
+    window.history.back();
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.hash = "";
+  window.history.replaceState(null, "", url);
+  synchronizeHash();
+}
+
+function saveRunId(runId, keepHash = false) {
   activeRunId.value = runId;
   const url = new URL(window.location.href);
   if (runId) url.searchParams.set("run_id", runId);
   else url.searchParams.delete("run_id");
-  window.history.replaceState(null, "", url);
+  if (!keepHash) {
+    url.hash = "";
+    linkedCall.value = null;
+  }
+  window.history.replaceState(keepHash ? window.history.state : null, "", url);
+  if (runId) recentRunIds.value = rememberRun(runId, recentRunIds.value);
 }
 
 function observedTurn(previous, { event }) {
@@ -404,6 +480,7 @@ async function display({ run, connection }, operation, formatErrorLabel) {
   captureRecords = [];
   captureEnded.value = false;
   lastReply.value = null;
+  feedback.reset();
   nextRecordKey = 0;
   entries.clear();
   seenRecordIds.clear();
@@ -438,6 +515,9 @@ async function display({ run, connection }, operation, formatErrorLabel) {
 }
 
 async function openPromptEditor() {
+  runStatus.value = "Aguardando execução";
+  resultFailure.value = false;
+  resultDetail.value = null;
   promptEditorOpen.value = true;
   await nextTick();
   promptInput.value?.focus();
@@ -530,6 +610,7 @@ async function replay() {
 
 function reopen(runId) {
   if (busy.value) return;
+  if (activeRunId.value !== runId) submittedPrompt.value = null;
   activeRunId.value = runId;
   replayMode.value = false;
   showRunHeader();
@@ -537,6 +618,7 @@ function reopen(runId) {
     { run: "Restaurando execução", connection: "Carregando histórico" },
     async (signal) => {
       const page = await loadRunHistory(runId, signal);
+      saveRunId(runId, new URLSearchParams(window.location.search).get("run_id") === runId);
       for (const { event_id: eventId, record } of page.events) appendRecord(record, eventId, { commands: page.commands });
       historyBefore.value = page.next_before;
       restoreSelection(runId);
@@ -569,6 +651,7 @@ function reopen(runId) {
 onMounted(() => {
   desktopQuery.addEventListener("change", updateDesktop);
   window.addEventListener("scroll", markVisibleEvents, { passive: true });
+  window.addEventListener("hashchange", synchronizeHash);
   const runId = new URLSearchParams(window.location.search).get("run_id");
   if (runId) reopen(runId);
 });
@@ -576,6 +659,7 @@ onMounted(() => {
 onUnmounted(() => {
   desktopQuery.removeEventListener("change", updateDesktop);
   window.removeEventListener("scroll", markVisibleEvents);
+  window.removeEventListener("hashchange", synchronizeHash);
   controller?.abort();
   historyController?.abort();
 });
@@ -596,6 +680,7 @@ onUnmounted(() => {
   </header>
 
   <main class="content" :class="{ 'composer-content': promptEditorOpen && !detailOpen }">
+    <p class="visually-hidden" role="status">{{ announcement }}</p>
     <div v-show="!detailOpen">
       <section v-if="promptEditorOpen" class="run-composer" aria-labelledby="composer-title">
         <h1 id="composer-title">Veja o que o agente faz entre o pedido e a resposta</h1>
@@ -615,7 +700,10 @@ onUnmounted(() => {
           ></textarea>
           <div class="workspace-summary">
             <p><span>Workspace</span><strong>Workspace de exemplo</strong></p>
-            <span class="quiet-label">Somente leitura</span>
+            <div class="workspace-permissions">
+              <span class="quiet-label">Leitura permitida</span>
+              <span class="quiet-label">Escrita bloqueada</span>
+            </div>
           </div>
           <div class="run-actions">
             <button id="execute" type="submit" :disabled="busy" aria-keyshortcuts="Control+Enter Meta+Enter">Executar</button>
@@ -626,6 +714,14 @@ onUnmounted(() => {
           <p><strong>Ver um replay de exemplo</strong><span>Eventos gravados e sanitizados. Sem chamada de modelo.</span></p>
           <button id="replay" class="secondary" type="button" :disabled="busy" @click="replay">Ver replay de exemplo</button>
         </div>
+        <section v-if="recentRunIds.length" class="recent-runs" aria-labelledby="recent-title">
+          <h2 id="recent-title">Execuções recentes nesta aba</h2>
+          <ul>
+            <li v-for="runId in recentRunIds" :key="runId">
+              <button type="button" class="link-button" :disabled="busy" @click="reopen(runId)">{{ runId }}</button>
+            </li>
+          </ul>
+        </section>
       </section>
       <header v-else ref="runHeader" class="run-summary" tabindex="-1">
         <div class="run-heading">
@@ -633,11 +729,11 @@ onUnmounted(() => {
             <p class="run-kicker">Codex CLI <template v-if="activeRunId"> · <code class="run-id">{{ activeRunId }}</code></template></p>
             <h1>Execução do agente</h1>
           </div>
-          <div class="run-statuses" role="status">
+          <div class="run-statuses" aria-label="Estados da execução">
             <span id="run-status" class="state-label" :class="{ 'state-failed': resultFailure }">
               <span aria-hidden="true">{{ resultFailure ? "×" : captureEnded ? "✓" : "●" }}</span>{{ runStatus }}
             </span>
-            <span id="connection-status" class="state-label connection-state" :title="connectionStatus">
+            <span id="connection-status" class="state-label connection-state" :class="{ 'is-reconnecting': connectionStatus === 'Reconectando' }">
               {{ connectionLabel }}
             </span>
             <button v-if="failureCount" type="button" class="state-label state-failed" @click="jumpToFirstFailure">
@@ -646,17 +742,28 @@ onUnmounted(() => {
             <span v-if="unconfirmedCount" class="state-label">{{ unconfirmedCount }} {{ unconfirmedCount === 1 ? "não confirmada" : "não confirmadas" }}</span>
           </div>
         </div>
-        <div v-if="connectionStatus === 'Reconectando' || connectionStatus === 'Interrompida'" class="connection-notice" role="status">
-          <p>{{ connectionStatus === "Reconectando"
-            ? "Conexão perdida. Tentando reconectar. Os estados podem estar desatualizados."
-            : "Fluxo interrompido. Os eventos exibidos permanecem disponíveis." }}</p>
-          <button v-if="activeRunId && !busy" class="secondary" type="button" @click="reopen(activeRunId)">Reconectar</button>
+        <div v-if="connectionStatus === 'Reconectando' || connectionStatus === 'Interrompida'" class="connection-notice">
+          <p v-if="connectionStatus === 'Reconectando'">
+            Conexão perdida.
+            <template v-if="lastUpdateSeconds != null">Última atualização há {{ lastUpdateSeconds }} s.</template>
+            Tentando novamente. O estado dos comandos em andamento pode estar desatualizado.
+          </p>
+          <p v-else>Fluxo interrompido. Os eventos exibidos permanecem disponíveis.</p>
+          <button v-if="activeRunId" class="secondary" type="button" @click="retryConnection">Tentar agora</button>
         </div>
+        <p v-else-if="recovered != null" class="connection-notice">
+          Reconectado{{ recovered ? ` · ${recovered} ${recovered === 1 ? "evento recebido" : "eventos recebidos"}` : "" }}
+        </p>
         <div v-if="replayMode" class="replay-banner">
           <p>Replay de eventos gravados. Nenhum modelo está sendo chamado.</p>
-          <button id="replay" class="secondary" type="button" aria-label="Reiniciar replay" @click="replay">Reiniciar</button>
+          <div class="replay-actions">
+            <button id="replay" class="secondary" type="button" aria-label="Reiniciar replay" @click="replay">Reiniciar</button>
+            <button v-if="rows.length" class="secondary" type="button" :disabled="following" @click="followLatest">
+              {{ busy ? following ? "Seguindo até o fim" : "Acompanhar até o fim" : "Pular para o fim" }}
+            </button>
+          </div>
         </div>
-        <p v-if="failureReason" class="run-failure" role="status">{{ failureReason }}</p>
+        <p v-if="failureReason" class="run-failure">{{ failureReason }}</p>
         <details v-if="submittedPrompt" class="prompt-summary">
           <summary>
             <strong>Prompt</strong>
@@ -674,8 +781,19 @@ onUnmounted(() => {
           </p>
           <p v-if="failureCount"><strong>{{ failureCount }}</strong> {{ failureCount === 1 ? "falha" : "falhas" }}</p>
         </div>
+        <details v-if="mobileMetrics || tokens.length" class="mobile-metrics">
+          <summary>{{ mobileMetrics || "Métricas" }}</summary>
+          <dl>
+            <div><dt>Ações carregadas</dt><dd>{{ actions.length }}</dd></div>
+            <div><dt>Falhas carregadas</dt><dd>{{ failureCount }}</dd></div>
+            <div v-for="token in tokens" :key="token.field">
+              <dt>Tokens de {{ token.label.toLowerCase() }}</dt><dd>{{ token.value }}</dd>
+            </div>
+          </dl>
+          <p v-if="historyBefore != null">Contagens referentes aos eventos carregados.</p>
+        </details>
       </header>
-      <p v-if="promptEditorOpen && (busy || resultFailure || runStatus === 'Execução salva não encontrada')" id="run-status" class="composer-status" role="status">
+      <p v-if="promptEditorOpen && (busy || resultFailure || runStatus === 'Execução salva não encontrada')" id="run-status" class="composer-status">
         {{ runStatus }}<template v-if="failureReason">. {{ failureReason }}</template>
       </p>
       <ReplyHighlight
@@ -696,12 +814,12 @@ onUnmounted(() => {
             <div v-if="selectedAction" class="inspector-heading">
               <span class="run-kicker">{{ selectedAction.command ? "Comando" : selectedAction.tool ? "Ferramenta" : "Evento" }}</span>
               <p v-if="selectedAction.command || selectedAction.tool || selectedAction.failed" class="command-status">
-                <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
-                {{ selectedAction.icon ? selectedAction.label : selectedAction.failed ? "Falhou" : selectedAction.label }}
+                <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon || (selectedAction.failed ? "×" : "") }}</span>
+                {{ selectedAction.icon ? selectedLabel : selectedAction.failed ? "Falhou" : selectedLabel }}
               </p>
               <h2 :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h2>
             </div>
-            <ActionDetails v-if="selectedAction" :key="selectedAction.key" :entry="selectedAction" />
+            <ActionDetails v-if="selectedAction" :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" @announce="announce" />
             <section v-else class="run-overview">
               <h2>Resumo da execução</h2>
               <dl>
@@ -761,9 +879,9 @@ onUnmounted(() => {
               :aria-disabled="loadingHistory"
               @click="loadEarlierEvents"
             >{{ loadingHistory ? "Carregando eventos anteriores…" : "Carregar eventos anteriores" }}</button>
-            <p v-if="historyError" role="status">{{ historyError }}</p>
+            <p v-if="historyError">{{ historyError }}</p>
           </div>
-          <p v-if="selectionPending" class="history-controls" role="status">
+          <p v-if="selectionPending" class="history-controls">
             {{ historyBefore != null ? "A ação selecionada ainda não está nos eventos carregados." : "A ação selecionada não está no histórico disponível." }}
           </p>
           <p v-if="failedOnly && !visibleRows.length" class="empty-timeline">
@@ -774,7 +892,7 @@ onUnmounted(() => {
               v-for="entry in visibleRows"
               :id="`timeline-${entry.key}`"
               :key="entry.key"
-              v-memo="[entry, desktop, entry.technicalEvents ? selectedActionKey : selectedActionKey === entry.key]"
+              v-memo="[entry, desktop, captureEnded, entry.technicalEvents ? selectedActionKey : selectedActionKey === entry.key]"
               :tabindex="entry.markdown ? -1 : undefined"
               :data-technical-key="entry.technicalEvents?.[0].key"
               :data-event-type="entry.event?.type"
@@ -788,6 +906,7 @@ onUnmounted(() => {
                 :entry="entry"
                 :desktop="desktop"
                 :selected="selectedActionKey === entry.key"
+                :terminal="captureEnded"
                 @select="selectAction"
               />
               <TechnicalEvents v-else-if="entry.technicalEvents" :events="entry.technicalEvents" :selected-key="selectedActionKey" @select="selectAction" />
@@ -795,38 +914,39 @@ onUnmounted(() => {
             </li>
           </ol>
           <div v-if="newEvents && !following && !failedOnly" class="new-events">
-            <button type="button" class="secondary" @click="toggleFollowing">
+            <button type="button" class="secondary" @click="followLatest">
               <span aria-hidden="true">↓</span> {{ newEvents === 1 ? "1 novo evento" : `${newEvents} novos eventos` }}
             </button>
           </div>
         </section>
       </div>
+      <p v-if="!promptEditorOpen && replayMode" class="continuation-note">Continuar a conversa não está disponível em replays.</p>
     </div>
 
     <section
       v-if="detailOpen && selectedAction"
       class="narrow-command-detail"
       aria-labelledby="command-detail-title"
-      @keydown.esc.prevent="returnToTimeline"
+      @keydown.esc.prevent="closeMobileDetail"
     >
       <button
         ref="backToTimelineButton"
         type="button"
         class="link-button detail-back"
-        @click="returnToTimeline"
+        @click="closeMobileDetail"
       >
-        <span aria-hidden="true">←</span> Voltar à trajetória
+        <span aria-hidden="true">←</span> Trajetória
       </button>
       <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool)?.status">
         <header class="narrow-command-heading">
           <span class="run-kicker">{{ selectedAction.command ? "Comando" : selectedAction.tool ? "Ferramenta" : "Evento" }}</span>
           <p v-if="selectedAction.command || selectedAction.tool" class="command-status">
             <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
-            {{ selectedAction.label }}
+            {{ selectedLabel }}
           </p>
           <h1 id="command-detail-title" :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h1>
         </header>
-        <ActionDetails :key="selectedAction.key" :entry="selectedAction" />
+        <ActionDetails :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" @announce="announce" />
       </div>
     </section>
   </main>
