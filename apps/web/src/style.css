@@ -472,20 +472,14 @@ summary:hover { background: var(--surface-muted); }
 .command-content { grid-area: content; display: grid; justify-items: start; gap: 3px; min-width: 0; }
 .command-title { font-size: .875rem; font-weight: 650; }
 .command-literal {
-  display: -webkit-box;
+  display: block;
   max-width: 100%;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  padding-inline: 4px;
-  border-radius: 3px;
-  background: var(--code-bg);
-  color: var(--ink);
+  text-overflow: ellipsis;
+  color: var(--ink-muted);
   font: .8rem/1.5 var(--font-code);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  white-space: nowrap;
 }
-.command-title + .command-literal { color: var(--ink-muted); }
 .command-status { font-size: .875rem; font-weight: 650; gap: 5px; }
 .command-select .command-status { grid-area: state; justify-self: end; text-align: right; }
 .duration { grid-area: duration; justify-self: end; color: var(--ink-muted); font: .75rem/1.5 var(--font-code); }
@@ -532,7 +526,7 @@ summary:hover { background: var(--surface-muted); }
 .action-section p, .action-technical p { color: var(--ink-muted); font-size: .875rem; }
 .action-section p:not(:last-child) { margin-block-end: 6px; }
 .action-section pre, .action-json pre, .action-technical pre { max-height: 18rem; overflow: auto; }
-.action-section pre { padding: 8px 10px; border-radius: 4px; }
+:where(.action-section) pre { padding: 8px 10px; border-radius: 4px; }
 .action-technical p { padding: 0 16px 8px; }
 .action-technical summary, .action-json summary {
   color: var(--ink-muted);
@@ -609,15 +603,16 @@ summary:hover { background: var(--surface-muted); }
   min-width: 64px;
   margin: 2px 4px 0 0;
 }
-.command-code {
+.inspector-code {
   padding: 12px;
   border-radius: 4px;
+  background: var(--code-bg);
   font: 13px/1.5 var(--font-code);
   font-variant-ligatures: none;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.command-code:focus-visible { outline: 2px solid var(--accent-link); outline-offset: -2px; }
+.inspector-code:focus-visible { outline: 2px solid var(--accent-link); outline-offset: -2px; }
 .command-code code { font: inherit; font-variant-ligatures: inherit; }
 .shell-prompt { color: var(--ink-muted); user-select: none; }
 .shell-token.executable { font-weight: 700; }
@@ -726,12 +721,6 @@ pre {
     padding: 10px 8px;
   }
   .command-content:has(.command-literal) .command-title { display: none; }
-  .command-content .command-literal {
-    display: block;
-    text-overflow: ellipsis;
-    white-space: pre;
-    color: var(--ink);
-  }
   .command-times { display: flex; grid-area: times; align-items: baseline; flex-wrap: wrap; gap: 0 6px; }
   .command-times .duration::before { content: "· "; }
   .command-times .command-offset { padding-block-start: 0; }

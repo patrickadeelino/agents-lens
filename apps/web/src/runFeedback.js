@@ -13,7 +13,10 @@ export function useRunFeedback(connection) {
   let recoveredTimer;
 
   function announce(message) {
-    if (queue.length < 3 && !queue.includes(message)) queue.push(message);
+    if (queue.length < 3 && !queue.includes(message)) {
+      queue.push(message);
+      if (announcement.value === message) announcement.value = "";
+    }
     if (announceTimer) return;
     announceTimer = setTimeout(() => {
       announcement.value = queue.join(" ");

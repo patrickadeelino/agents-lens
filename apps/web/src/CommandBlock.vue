@@ -43,7 +43,7 @@ onUnmounted(() => {
       <button type="button" class="link-button command-copy" aria-label="Copiar comando" @click="copyCommand">
         {{ copied ? "Copiado" : "Copiar" }}
       </button>
-      <pre :id="commandId" class="command-code" tabindex="0" aria-label="Comando"><code><span class="shell-prompt" aria-hidden="true">$ </span><template v-for="(part, index) in parts" :key="index"><span v-if="part.token" class="shell-token" :class="part.kind">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></code></pre>
+      <pre :id="commandId" class="inspector-code command-code" tabindex="0" aria-label="Comando"><code><span class="shell-prompt" aria-hidden="true">$ </span><template v-for="(part, index) in parts" :key="index"><span v-if="part.token" class="shell-token" :class="part.kind">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></code></pre>
     </div>
     <button type="button" class="link-button command-original" :aria-controls="commandId" :aria-expanded="showOriginal" @click="showOriginal = !showOriginal">
       <span aria-hidden="true">{{ showOriginal ? "▾" : "▸" }}</span>

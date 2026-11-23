@@ -67,7 +67,7 @@ async function copyOutput() {
           ? "A execução terminou sem enviar o resultado deste comando."
           : "A execução terminou sem enviar o resultado desta ação." }}
       </p>
-      <pre v-if="capturedText" :id="outputId" tabindex="0" :aria-label="longOutput && !outputOpen ? 'Prévia da saída' : 'Saída capturada'">{{ longOutput && !outputOpen ? preview + "…" : capturedText }}</pre>
+      <pre v-if="capturedText" :id="outputId" class="inspector-code" tabindex="0" :aria-label="longOutput && !outputOpen ? 'Prévia da saída' : 'Saída capturada'">{{ longOutput && !outputOpen ? preview + "…" : capturedText }}</pre>
       <button v-if="longOutput" type="button" class="link-button output-toggle" :aria-controls="outputId" :aria-expanded="outputOpen" @click="outputOpen = !outputOpen">
         {{ outputOpen ? "Recolher" : "Mostrar tudo" }}
       </button>
