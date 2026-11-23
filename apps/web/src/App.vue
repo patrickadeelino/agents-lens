@@ -7,7 +7,7 @@ import ReplyHighlight from "./ReplyHighlight.vue";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import {
   commandTitle, describeEvent, describeTool, errorMessage, firstLine, formatDuration, formatOffset,
-  reportedTokens, statusPresentation, trajectoryRows,
+  reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
 } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
 import { CommandTimeline } from "./timeline.js";
@@ -44,6 +44,14 @@ const busy = ref(false);
 const replayMode = ref(false);
 const runStatus = ref("Aguardando execução");
 const connectionStatus = ref("Inativa");
+const connectionLabel = computed(() => {
+  if (replayMode.value) return "Replay";
+  return ({
+    "Recebendo eventos": "Ao vivo",
+    "Reconectando": "Reconectando…",
+    "Fluxo encerrado": "Encerrado",
+  })[connectionStatus.value] ?? connectionStatus.value;
+});
 const resultFailure = ref(false);
 const resultDetail = ref(null);
 const turnIssue = ref(null);
@@ -51,6 +59,7 @@ const streamIssue = ref(null);
 const failureReason = computed(() => resultDetail.value
   ?? (resultFailure.value ? turnIssue.value ?? streamIssue.value : null));
 const tokens = shallowRef([]);
+const reportedTotal = computed(() => tokenSummary(tokens.value));
 const captureEnded = ref(false);
 const lastReply = shallowRef(null);
 const highlightedReply = computed(() => captureEnded.value ? lastReply.value : null);
@@ -252,6 +261,13 @@ async function jumpToReply(key) {
   if (disclosure) disclosure.open = true;
   row.scrollIntoView({ block: "center" });
   row.focus({ preventScroll: true });
+}
+
+function jumpToFirstFailure() {
+  const entry = rows.value.find((row) => row.failed);
+  if (!entry) return;
+  if (entry.command || entry.tool) return jumpToAction(entry);
+  return jumpToReply(entry.key);
 }
 
 async function loadEarlierEvents() {
@@ -569,7 +585,13 @@ onUnmounted(() => {
   <header class="topbar">
     <div class="topbar-content">
       <span class="wordmark">Agent Lens</span>
-      <span class="workspace">Workspace de exemplo · Somente leitura</span>
+      <div class="topbar-context">
+        <span class="workspace">Workspace de exemplo · Somente leitura</span>
+        <div v-if="!promptEditorOpen && !detailOpen" class="topbar-actions">
+          <button class="secondary" type="button" :disabled="busy" @click="openPromptEditor">Nova execução</button>
+          <button v-if="!replayMode" class="link-button" type="button" :disabled="busy" @click="replay">Ver replay de exemplo</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -616,9 +638,11 @@ onUnmounted(() => {
               <span aria-hidden="true">{{ resultFailure ? "×" : captureEnded ? "✓" : "●" }}</span>{{ runStatus }}
             </span>
             <span id="connection-status" class="state-label connection-state" :title="connectionStatus">
-              {{ replayMode ? "Replay" : connectionStatus === 'Recebendo eventos' ? "Ao vivo" : connectionStatus }}
+              {{ connectionLabel }}
             </span>
-            <span v-if="failureCount" class="state-label state-failed">{{ failureCount }} {{ failureCount === 1 ? "falha" : "falhas" }}</span>
+            <button v-if="failureCount" type="button" class="state-label state-failed" @click="jumpToFirstFailure">
+              <span aria-hidden="true">×</span>{{ failureCount }} {{ failureCount === 1 ? "falha" : "falhas" }}
+            </button>
             <span v-if="unconfirmedCount" class="state-label">{{ unconfirmedCount }} {{ unconfirmedCount === 1 ? "não confirmada" : "não confirmadas" }}</span>
           </div>
         </div>
@@ -641,21 +665,14 @@ onUnmounted(() => {
           </summary>
           <p>{{ submittedPrompt }}</p>
         </details>
-        <div v-if="actions.length || tokens.length" class="run-stats">
+        <div v-if="actions.length || reportedTotal || failureCount" class="run-stats">
+          <p v-if="reportedTotal"><strong>{{ reportedTotal.value }}</strong> {{ reportedTotal.label }}</p>
           <p v-if="actions.length">
             <strong>{{ actions.length }}</strong> {{ actions.length === 1 ? "ação" : "ações" }}
             <template v-if="historyBefore != null"> {{ actions.length === 1 ? "carregada" : "carregadas" }}</template>
             <span v-if="busy && !captureEnded && activeAction" class="run-active-action"> · Em andamento <strong>{{ actionTitle(activeAction) }}</strong></span>
           </p>
-          <details v-if="tokens.length" class="run-metrics">
-            <summary>Métricas</summary>
-            <p>Tokens reportados pelo Codex</p>
-            <dl>
-              <div v-for="token in tokens" :key="token.field">
-                <dt>{{ token.label }}</dt><dd>{{ token.value }}</dd>
-              </div>
-            </dl>
-          </details>
+          <p v-if="failureCount"><strong>{{ failureCount }}</strong> {{ failureCount === 1 ? "falha" : "falhas" }}</p>
         </div>
       </header>
       <p v-if="promptEditorOpen && (busy || resultFailure || runStatus === 'Execução salva não encontrada')" id="run-status" class="composer-status" role="status">
@@ -664,13 +681,13 @@ onUnmounted(() => {
       <div v-if="!promptEditorOpen && (rows.length || historyBefore != null)" class="run-layout">
         <div class="run-sidebar">
           <aside
-            v-if="desktop && selectedAction"
+            v-if="desktop"
             id="action-inspector"
             class="command-inspector"
             aria-label="Inspetor de ações"
-            :data-command-status="(selectedAction.command ?? selectedAction.tool).status"
+            :data-command-status="(selectedAction?.command ?? selectedAction?.tool)?.status"
           >
-            <div class="inspector-heading">
+            <div v-if="selectedAction" class="inspector-heading">
               <span class="run-kicker">{{ selectedAction.command ? "Comando" : "Ferramenta" }}</span>
               <p class="command-status">
                 <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
@@ -678,7 +695,22 @@ onUnmounted(() => {
               </p>
               <h2>{{ selectedTitle }}</h2>
             </div>
-            <ActionDetails :key="selectedAction.key" :entry="selectedAction" />
+            <ActionDetails v-if="selectedAction" :key="selectedAction.key" :entry="selectedAction" />
+            <section v-else class="run-overview">
+              <h2>Resumo da execução</h2>
+              <dl>
+                <div><dt>Falhas</dt><dd>{{ failureCount }}</dd></div>
+                <div><dt>Não confirmadas</dt><dd>{{ unconfirmedCount }}</dd></div>
+              </dl>
+              <template v-if="tokens.length">
+                <h3>Tokens reportados pelo Codex</h3>
+                <dl>
+                  <div v-for="token in tokens" :key="token.field">
+                    <dt>{{ token.label }}</dt><dd>{{ token.value }}</dd>
+                  </div>
+                </dl>
+              </template>
+            </section>
           </aside>
           <details v-if="actions.length" class="action-index" :open="desktop">
             <summary>Índice de ações <span>{{ actions.length }}{{ historyBefore != null ? " carregadas" : "" }}</span></summary>
@@ -770,10 +802,6 @@ onUnmounted(() => {
         :entry="highlightedReply"
         @jump="jumpToReply"
       />
-      <footer v-if="!promptEditorOpen && !busy" class="run-footer">
-        <button class="secondary" type="button" @click="openPromptEditor">Nova execução</button>
-        <button v-if="!replayMode" class="link-button" type="button" @click="replay">Ver replay de exemplo</button>
-      </footer>
     </div>
 
     <section

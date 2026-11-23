@@ -134,7 +134,17 @@ export function reportedTokens(event) {
   if (event.type !== "turn.completed") return [];
   return Array.from(tokenLabels, ([field, label]) => ({ field, label, value: event.usage?.[field] }))
     .filter(({ value }) => Number.isSafeInteger(value) && value >= 0)
-    .map(({ field, label, value }) => ({ field, label, value: numbers.format(value) }));
+    .map(({ field, label, value }) => ({ field, label, amount: value, value: numbers.format(value) }));
+}
+
+export function tokenSummary(tokens) {
+  const input = tokens.find(({ field }) => field === "input_tokens");
+  const output = tokens.find(({ field }) => field === "output_tokens");
+  if (input && output && Number.isSafeInteger(input.amount + output.amount)) {
+    return { value: numbers.format(input.amount + output.amount), label: "tokens · reportado pelo Codex" };
+  }
+  const known = input ?? output;
+  return known ? { value: known.value, label: `tokens de ${known.label.toLowerCase()} · reportado pelo Codex` } : null;
 }
 
 export function describeTool({ event }, previous) {
