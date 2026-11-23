@@ -1,12 +1,15 @@
 <script setup>
 import { computed, ref, useId, watchEffect } from "vue";
+import CommandBlock from "./CommandBlock.vue";
 
 const props = defineProps({
   entry: { type: Object, required: true },
   label: String,
   mobile: Boolean,
+  workspace: String,
 });
-const title = computed(() => props.entry.title || props.entry.commandText || props.entry.tool?.name || props.entry.label);
+defineEmits(["announce"]);
+const title = computed(() => props.entry.title || props.entry.tool?.name || (props.entry.command ? "Comando shell" : props.entry.label));
 const kind = computed(() => {
   if (props.entry.command) return "Comando";
   if (props.entry.markdown) return "Mensagem";
@@ -37,13 +40,13 @@ watchEffect((onCleanup) => {
       {{ entry.icon ? label : "Falhou" }}
     </p>
     <div :id="textId" ref="text" class="inspector-title" :class="{ 'is-expanded': expanded }">
-      <component :is="mobile ? 'h1' : 'h2'" :id="mobile ? 'command-detail-title' : undefined" :class="{ 'inspector-command': entry.command && !entry.title }">
+      <component :is="mobile ? 'h1' : 'h2'" :id="mobile ? 'command-detail-title' : undefined">
         {{ title }}
       </component>
-      <code v-if="entry.command && entry.title" class="inspector-command inspector-literal">{{ entry.commandText }}</code>
     </div>
     <button v-if="longTitle" class="link-button inspector-title-toggle" type="button" :aria-expanded="expanded" :aria-controls="textId" @click="expanded = !expanded">
       {{ expanded ? "Recolher título" : "Mostrar tudo" }}
     </button>
+    <CommandBlock v-if="entry.command?.command" :raw="entry.command.command" :workspace="workspace" @announce="$emit('announce', $event)" />
   </header>
 </template>

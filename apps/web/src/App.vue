@@ -898,7 +898,7 @@ onUnmounted(() => {
             :data-command-status="(selectedAction?.command ?? selectedAction?.tool)?.status"
           >
             <template v-if="selectedAction">
-              <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" />
+              <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" :workspace="workspaceRoot" @announce="announce" />
               <ActionDetails
                 :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot"
                 :run-id="activeRunId" :final="highlightedReply?.key === selectedAction.key"
@@ -1041,7 +1041,7 @@ onUnmounted(() => {
         <span aria-hidden="true">←</span> Trajetória
       </button>
       <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool)?.status" :data-failure="selectedAction.failed || undefined">
-        <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" mobile />
+        <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" :workspace="workspaceRoot" mobile @announce="announce" />
         <ActionDetails
           :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot"
           :run-id="activeRunId" :final="highlightedReply?.key === selectedAction.key"

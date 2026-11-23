@@ -56,3 +56,27 @@ export function formatShellCommand(raw) {
   }
   return formatted.join("") + raw.slice(cursor);
 }
+
+export function shellCommandParts(text) {
+  const tokens = tokenizeShellCommand(text);
+  if (!tokens) return [{ text }];
+  const parts = [];
+  let cursor = 0;
+  let atExecutable = true;
+  for (const token of tokens) {
+    if (token.start > cursor) parts.push({ text: text.slice(cursor, token.start) });
+    let kind;
+    if (token.operator && token.depth === 0) {
+      atExecutable = true;
+    } else if (atExecutable && !/^[a-z_]\w*=/i.test(token.text)) {
+      kind = "executable";
+      atExecutable = false;
+    } else if (token.text.startsWith("-")) {
+      kind = "flag";
+    }
+    parts.push({ text: token.text, token: true, kind });
+    cursor = token.end;
+  }
+  if (cursor < text.length) parts.push({ text: text.slice(cursor) });
+  return parts;
+}

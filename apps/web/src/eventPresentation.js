@@ -183,6 +183,7 @@ export function commandTitle(command) {
     return `Ler ${file.split("/").filter(Boolean).at(-1) ?? file}`;
   }
   if (/^ls(?:\s|$)/.test(simpleCommand)) return "Listar arquivos";
+  if (/^find(?:\s|$)/.test(simpleCommand)) return "Buscar arquivos";
   if (/^(?:rg|grep)(?:\s|$)/.test(simpleCommand)) return "Buscar";
   if (/^sed[ \t]+-n(?:\s|$)/.test(simpleCommand)) return "Ler trecho";
   return null;

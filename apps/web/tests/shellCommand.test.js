@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatShellCommand } from "../src/shellCommand.js";
+import { formatShellCommand, shellCommandParts } from "../src/shellCommand.js";
 
 test("long find commands keep option values and escaped groups together", () => {
   const raw = "find . -maxdepth 2 \\( -iname 'README*' -o -iname 'readme*' \\) -type f";
@@ -35,4 +35,12 @@ test("short commands stay on a single line", () => {
   assert.equal(formatShellCommand("ls  -a"), "ls  -a");
   const exactly64 = "cat " + "a".repeat(57) + " -n";
   assert.equal(formatShellCommand(exactly64), exactly64);
+});
+
+test("presentation marks the executable of each stage and flags without changing the text", () => {
+  const text = formatShellCommand("LANG=C pwd && rg --files -g 'README*' && sed -n '1,160p'");
+  const parts = shellCommandParts(text);
+  assert.equal(parts.map((part) => part.text).join(""), text);
+  assert.deepEqual(parts.filter((part) => part.kind === "executable").map((part) => part.text), ["pwd", "rg", "sed"]);
+  assert.deepEqual(parts.filter((part) => part.kind === "flag").map((part) => part.text), ["--files", "-g", "-n"]);
 });
