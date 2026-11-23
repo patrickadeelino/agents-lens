@@ -1,19 +1,23 @@
 <script setup>
 import { computed, ref, useId } from "vue";
-import { displayValue } from "./eventPresentation.js";
+import { commandStderr, displayValue } from "./eventPresentation.js";
+import { renderAgentMarkdown } from "./markdown.js";
 
 const props = defineProps({
   entry: { type: Object, required: true },
   terminal: Boolean,
   workspace: String,
+  runId: String,
+  final: Boolean,
 });
-const emit = defineEmits(["announce"]);
+const emit = defineEmits(["announce", "jump"]);
 
 const input = computed(() => props.entry.tool?.input);
 const status = computed(() => (props.entry.command ?? props.entry.tool)?.status);
-const error = computed(() => props.entry.tool?.error);
+const itemId = computed(() => props.entry.command?.id ?? props.entry.event?.item?.id);
+const error = computed(() => props.entry.tool?.error ?? commandStderr(props.entry.command));
 const output = computed(() => props.entry.command?.output ?? props.entry.tool?.output);
-const capturedText = computed(() => [error.value, output.value]
+const capturedText = computed(() => [...new Set([error.value, output.value])]
   .filter((value) => value != null && value !== "")
   .map(formatValue).join("\n\n"));
 const preview = computed(() => capturedText.value.slice(0, 2000).split("\n").slice(0, 15).join("\n"));
@@ -22,6 +26,7 @@ const outputOpen = ref(false);
 const outputId = useId();
 const longOutput = computed(() => preview.value !== capturedText.value);
 const copyStatus = ref("");
+const message = computed(() => props.entry.markdown && !props.final ? renderAgentMarkdown(props.entry.markdown) : "");
 
 function formatValue(value) {
   return displayValue(value, props.workspace);
@@ -70,6 +75,10 @@ async function copyOutput() {
         {{ output === "" ? "Saída vazia." : "Saída indisponível." }}
       </p>
     </section>
+    <section v-if="entry.markdown" class="action-section">
+      <div v-if="message" class="agent-message" v-html="message"></div>
+      <button v-else-if="final" type="button" class="link-button" @click="$emit('jump')">Ler a resposta final ↑</button>
+    </section>
     <div class="inspector-actions">
       <button v-if="capturedText" type="button" class="link-button" @click="copyOutput">Copiar</button>
       <details class="action-json" @toggle="jsonOpen = $event.currentTarget.open">
@@ -85,6 +94,8 @@ async function copyOutput() {
         <pre tabindex="0" aria-label="Comando completo">{{ formatValue(entry.command.command) }}</pre>
       </template>
       <p v-if="entry.completedOffset != null">Fim observado {{ entry.completedOffset }}</p>
+      <p v-if="itemId">ID do item <code>{{ itemId }}</code></p>
+      <p v-if="runId">ID da execução <code>{{ runId }}</code></p>
       <p v-if="entry.command?.startMissing">Início ausente dos eventos exibidos.</p>
       <p v-if="(entry.command ?? entry.tool).conflictingResults">Foram recebidos resultados divergentes para esta ação.</p>
     </details>

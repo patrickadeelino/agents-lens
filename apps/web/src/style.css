@@ -561,21 +561,30 @@ summary:hover { background: var(--surface-muted); }
   background: var(--surface);
 }
 
-.narrow-command-heading {
+.inspector-heading {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 6px 10px;
+  align-items: center;
+  gap: 8px 10px;
   padding: 14px 16px;
 }
-
-.narrow-command-heading h1 {
+.inspector-title {
   grid-column: 1 / -1;
+  max-block-size: 72px;
+  overflow: hidden;
+}
+.inspector-title.is-expanded { max-block-size: none; }
+.inspector-title :is(h1, h2, code) {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 24px;
+  letter-spacing: normal;
   overflow-wrap: anywhere;
 }
 .inspector-command { font-family: var(--font-code); white-space: pre-wrap; }
+.inspector-title .inspector-literal { display: block; color: var(--ink-muted); font-size: .875rem; }
+.inspector-title-toggle { grid-column: 1 / -1; justify-self: start; color: var(--accent-link); }
 
 .run-sidebar { min-width: 0; }
 .run-sidebar:empty { display: none; }
@@ -647,15 +656,6 @@ pre {
     border-radius: 4px;
     background: var(--surface);
   }
-  .inspector-heading {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: center;
-    gap: 9px 10px;
-    padding: 14px 16px;
-  }
-  .inspector-heading h2 { grid-column: 1 / -1; font-size: 1.15rem; overflow-wrap: anywhere; }
-  .inspector-heading h2.inspector-command { font-size: 1.25rem; }
 }
 
 @media (max-width: 900px) {

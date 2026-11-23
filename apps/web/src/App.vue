@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, shallowReactive, shall
 import ActionDetails from "./ActionDetails.vue";
 import ActionRow from "./ActionRow.vue";
 import EventRow from "./EventRow.vue";
+import InspectorHeading from "./InspectorHeading.vue";
 import ReplyHighlight from "./ReplyHighlight.vue";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import {
@@ -87,10 +88,6 @@ const desktop = ref(desktopQuery.matches);
 const linkedCall = ref(callFromHash());
 const selectedActionKey = ref(null);
 const selectedAction = computed(() => entries.get(selectedActionKey.value));
-const selectedTitle = computed(() => {
-  const entry = selectedAction.value;
-  return entry?.command ? entry.commandText || "Comando" : entry ? actionTitle(entry) : "";
-});
 const selectedLabel = computed(() => selectedAction.value?.label === "Não confirmado" && !captureEnded.value
   ? "Resultado indisponível" : selectedAction.value?.label);
 const selectionPending = computed(() => Boolean(selectedActionKey.value && !selectedAction.value));
@@ -109,6 +106,7 @@ let lastScrollY = window.scrollY;
 let refreshScheduled = false;
 let replayOperation;
 let topbarObserver;
+let focusReplyOnReturn = false;
 
 watch(ticking, (active, _, onCleanup) => {
   if (!active) return;
@@ -326,6 +324,11 @@ async function jumpToReply(key) {
 }
 
 function jumpToReplyBlock() {
+  if (detailOpen.value) {
+    focusReplyOnReturn = true;
+    closeMobileDetail();
+    return;
+  }
   replyBlock.value?.$el.focus();
 }
 
@@ -422,6 +425,11 @@ async function returnToTimeline() {
   returnPosition.value = null;
   await nextTick();
 
+  if (focusReplyOnReturn) {
+    focusReplyOnReturn = false;
+    jumpToReplyBlock();
+    return;
+  }
   if (trigger.isConnected) {
     // Earlier rows may have changed height while the trajectory was hidden.
     const shift = trigger.getBoundingClientRect().top - triggerTop;
@@ -869,15 +877,14 @@ onUnmounted(() => {
             aria-label="Inspetor de ações"
             :data-command-status="(selectedAction?.command ?? selectedAction?.tool)?.status"
           >
-            <div v-if="selectedAction" class="inspector-heading">
-              <span class="run-kicker">{{ selectedAction.command ? "Comando" : selectedAction.tool ? "Ferramenta" : "Evento" }}</span>
-              <p v-if="selectedAction.command || selectedAction.tool || selectedAction.failed" class="command-status">
-                <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon || (selectedAction.failed ? "×" : "") }}</span>
-                {{ selectedAction.icon ? selectedLabel : selectedAction.failed ? "Falhou" : selectedLabel }}
-              </p>
-              <h2 :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h2>
-            </div>
-            <ActionDetails v-if="selectedAction" :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot" @announce="announce" />
+            <template v-if="selectedAction">
+              <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" />
+              <ActionDetails
+                :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot"
+                :run-id="activeRunId" :final="highlightedReply?.key === selectedAction.key"
+                @announce="announce" @jump="jumpToReplyBlock"
+              />
+            </template>
             <section v-else class="run-overview">
               <h2>Resumo da execução</h2>
               <dl>
@@ -1002,15 +1009,12 @@ onUnmounted(() => {
         <span aria-hidden="true">←</span> Trajetória
       </button>
       <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool)?.status">
-        <header class="narrow-command-heading">
-          <span class="run-kicker">{{ selectedAction.command ? "Comando" : selectedAction.tool ? "Ferramenta" : "Evento" }}</span>
-          <p v-if="selectedAction.command || selectedAction.tool" class="command-status">
-            <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
-            {{ selectedLabel }}
-          </p>
-          <h1 id="command-detail-title" :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h1>
-        </header>
-        <ActionDetails :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot" @announce="announce" />
+        <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" mobile />
+        <ActionDetails
+          :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot"
+          :run-id="activeRunId" :final="highlightedReply?.key === selectedAction.key"
+          @announce="announce" @jump="jumpToReplyBlock"
+        />
       </div>
     </section>
   </main>

@@ -111,11 +111,14 @@ export function lastNonEmptyLine(text) {
   return firstLine(line);
 }
 
-export function commandErrorPreview(command, workspace) {
-  const stderr = command.records.findLast(({ event }) => (
+export function commandStderr(command) {
+  return command?.records.findLast(({ event }) => (
     event.type === "item.completed" && typeof event.item?.stderr === "string" && event.item.stderr.trim()
   ))?.event.item.stderr;
-  return lastNonEmptyLine(maskPaths(stderr ?? command.output, workspace));
+}
+
+export function commandErrorPreview(command, workspace) {
+  return lastNonEmptyLine(maskPaths(commandStderr(command) ?? command.output, workspace));
 }
 
 export function isOmittedMessage(text) {
