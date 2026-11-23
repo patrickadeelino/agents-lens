@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { h } from "vue";
 import { renderToString } from "vue/server-renderer";
+import { displayCommand } from "../src/eventPresentation.js";
 
 test("the rendered command keeps the raw straight quotes", async () => {
   const vite = await createServer({
@@ -12,7 +13,9 @@ test("the rendered command keeps the raw straight quotes", async () => {
   try {
     const { default: ActionRow } = await vite.ssrLoadModule("/src/ActionRow.vue");
     const command = `printf '%s' "Agent Lens"`;
-    const markup = await renderToString(h(ActionRow, { entry: { command: { command } } }));
+    const markup = await renderToString(h(ActionRow, {
+      entry: { command: { command }, commandText: displayCommand(command) },
+    }));
     const rendered = /<code[^>]*>([^<]*)<\/code>/.exec(markup)?.[1]
       .replaceAll("&#39;", "'").replaceAll("&quot;", '"');
     assert.equal(rendered, command);

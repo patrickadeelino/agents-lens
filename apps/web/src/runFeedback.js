@@ -1,5 +1,5 @@
 import { onUnmounted, ref, watch } from "vue";
-import { displayCommand } from "./eventPresentation.js";
+import { displayCommand, maskPaths } from "./eventPresentation.js";
 
 export function useRunFeedback(connection) {
   const announcement = ref("");
@@ -50,12 +50,12 @@ export function useRunFeedback(connection) {
     }
   }, { flush: "sync" });
 
-  function observe(record) {
+  function observe(record, workspace) {
     lastRecordAt = Date.now();
     if (recovering) recovered.value++;
     const { event } = record;
     if (event.type === "item.completed" && event.item?.status === "failed") {
-      const name = displayCommand(event.item.command) || event.item.tool;
+      const name = maskPaths(displayCommand(event.item.command) || event.item.tool, workspace);
       announce(name ? `Ação falhou: ${name.slice(0, 100)}.` : "Uma ação falhou.");
     }
   }

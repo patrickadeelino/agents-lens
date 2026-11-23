@@ -6,7 +6,7 @@ import EventRow from "./EventRow.vue";
 import ReplyHighlight from "./ReplyHighlight.vue";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import {
-  commandTitle, describeEvent, describeTool, displayCommand, errorMessage, firstLine, formatDuration, formatOffset,
+  commandTitle, describeEvent, describeTool, displayCommand, errorMessage, firstLine, formatDuration, formatOffset, maskPaths,
   reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
 } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
@@ -26,6 +26,7 @@ const returnPosition = shallowRef(null);
 const detailOpen = computed(() => returnPosition.value !== null);
 const entries = shallowReactive(new Map());
 const rows = computed(() => [...entries.values()]);
+const workspaceRoot = ref(null);
 const trajectoryView = ref("essential");
 const failedOnly = ref(false);
 const visibleRows = computed(() => trajectoryRows(rows.value, failedOnly.value ? "failures" : trajectoryView.value));
@@ -61,8 +62,8 @@ const resultFailure = ref(false);
 const resultDetail = ref(null);
 const turnIssue = ref(null);
 const streamIssue = ref(null);
-const failureReason = computed(() => resultDetail.value
-  ?? (resultFailure.value ? turnIssue.value ?? streamIssue.value : null));
+const failureReason = computed(() => maskPaths(resultDetail.value
+  ?? (resultFailure.value ? turnIssue.value ?? streamIssue.value : null), workspaceRoot.value));
 const tokens = shallowRef([]);
 const reportedTotal = computed(() => tokenSummary(tokens.value));
 const captureEnded = ref(false);
@@ -75,7 +76,7 @@ const selectedActionKey = ref(null);
 const selectedAction = computed(() => entries.get(selectedActionKey.value));
 const selectedTitle = computed(() => {
   const entry = selectedAction.value;
-  return entry?.command ? displayCommand(entry.command.command) || "Comando" : entry ? actionTitle(entry) : "";
+  return entry?.command ? entry.commandText || "Comando" : entry ? actionTitle(entry) : "";
 });
 const selectedLabel = computed(() => selectedAction.value?.label === "Não confirmado" && !captureEnded.value
   ? "Resultado indisponível" : selectedAction.value?.label);
@@ -104,15 +105,16 @@ function commandKey(id) {
 }
 
 function actionTitle(entry) {
-  return entry.title || entry.tool?.name || entry.command?.command || entry.label;
+  return entry.title || entry.tool?.name || entry.commandText || entry.label;
 }
 
 function renderCommand(command) {
   const key = commandKey(command.id);
   const status = statusPresentation(command.status);
+  const commandText = maskPaths(displayCommand(command.command), workspaceRoot.value);
   entries.set(key, {
-    key, command, title: commandTitle(command.command), ...status,
-    preview: status.failed ? firstLine(command.output) : null,
+    key, command, commandText, title: commandTitle(commandText), ...status,
+    preview: status.failed ? firstLine(maskPaths(command.output, workspaceRoot.value)) : null,
     duration: formatDuration(command.observedDurationNs),
     offset: formatOffset(command.records[0].elapsed_ns),
     startedOffset: formatOffset(command.startedOffsetNs),
@@ -138,6 +140,7 @@ function acceptRecord(record, eventId, commands) {
 function projectRecord({ key, record, duration }) {
   const { event } = record;
   if (event.type === "turn.started") {
+    if (typeof event.cwd === "string" && event.cwd.startsWith("/")) workspaceRoot.value = event.cwd;
     turnIssue.value = null;
     streamIssue.value = null;
     tokens.value = [];
@@ -160,12 +163,14 @@ function projectRecord({ key, record, duration }) {
   if (tool) {
     const records = [...(previous?.records ?? []), record];
     entries.set(toolKey, {
-      key: toolKey, tool, records, event, ...statusPresentation(tool.status),
+      key: toolKey, tool: { ...tool, name: maskPaths(tool.name, workspaceRoot.value) }, records, event, ...statusPresentation(tool.status),
+      toolPreview: maskPaths(tool.preview, workspaceRoot.value),
+      toolError: maskPaths(tool.error, workspaceRoot.value),
       offset: formatOffset(records[0].elapsed_ns),
     });
     return;
   }
-  const entry = { key, event, ...describeEvent(event), offset: formatOffset(record.elapsed_ns) };
+  const entry = { key, event, ...describeEvent(event, workspaceRoot.value), offset: formatOffset(record.elapsed_ns) };
   entries.set(key, entry);
   if (event.type === "item.completed" && entry.markdown?.trim()) lastReply.value = entry;
 }
@@ -176,7 +181,7 @@ function appendRecord(record, eventId, { live = false, commands = null } = {}) {
   captureRecords.push(accepted);
   projectRecord(accepted);
   if (live) {
-    feedback.observe(record);
+    feedback.observe(record, workspaceRoot.value);
     if (!following.value) newEvents.value++;
     updateLivePosition();
   }
@@ -478,6 +483,7 @@ async function display({ run, connection }, operation, formatErrorLabel) {
   historyBefore.value = null;
   historyError.value = "";
   captureRecords = [];
+  workspaceRoot.value = null;
   captureEnded.value = false;
   lastReply.value = null;
   feedback.reset();
@@ -819,7 +825,7 @@ onUnmounted(() => {
               </p>
               <h2 :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h2>
             </div>
-            <ActionDetails v-if="selectedAction" :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" @announce="announce" />
+            <ActionDetails v-if="selectedAction" :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot" @announce="announce" />
             <section v-else class="run-overview">
               <h2>Resumo da execução</h2>
               <dl>
@@ -849,7 +855,7 @@ onUnmounted(() => {
                   >
                     <span class="status-symbol" aria-hidden="true">{{ entry.icon }}</span>
                     <span class="visually-hidden">{{ entry.label }}</span>
-                    <code v-if="entry.command" :title="displayCommand(entry.command.command)">{{ displayCommand(entry.command.command) || "Comando" }}</code>
+                    <code v-if="entry.command" :title="entry.commandText">{{ entry.commandText || "Comando" }}</code>
                     <span v-else class="index-title">{{ entry.tool.name }}</span>
                   </button>
                 </li>
@@ -946,7 +952,7 @@ onUnmounted(() => {
           </p>
           <h1 id="command-detail-title" :class="{ 'inspector-command': selectedAction.command }">{{ selectedTitle }}</h1>
         </header>
-        <ActionDetails :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" @announce="announce" />
+        <ActionDetails :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot" @announce="announce" />
       </div>
     </section>
   </main>

@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { displayCommand, firstLine } from "./eventPresentation.js";
+import { firstLine } from "./eventPresentation.js";
 
 const props = defineProps({
   entry: { type: Object, required: true },
@@ -10,7 +10,7 @@ const props = defineProps({
 });
 defineEmits(["select"]);
 const name = computed(() => props.entry.command
-  ? displayCommand(props.entry.command.command) || "Comando" : props.entry.tool.name);
+  ? props.entry.commandText || "Comando" : props.entry.tool.name);
 const label = computed(() => props.entry.label === "Não confirmado" && !props.terminal
   ? "Resultado indisponível" : props.entry.label);
 const accessibleName = computed(() => [
@@ -38,8 +38,8 @@ const accessibleName = computed(() => [
     <span class="command-status">{{ label }}</span>
     <span v-if="entry.duration" class="duration" title="Duração observada">{{ entry.duration }}</span>
     <span v-if="entry.preview" class="failure-preview">{{ entry.preview }}</span>
-    <span v-else-if="entry.tool && (entry.failed || entry.tool.preview)" class="failure-preview">
-      {{ entry.failed ? firstLine(entry.tool.error) || entry.label : firstLine(entry.tool.preview) }}
+    <span v-else-if="entry.tool && (entry.failed || entry.toolPreview)" class="failure-preview">
+      {{ entry.failed ? firstLine(entry.toolError) || entry.label : firstLine(entry.toolPreview) }}
     </span>
   </button>
 </template>

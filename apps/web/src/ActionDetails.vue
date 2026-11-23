@@ -1,9 +1,11 @@
 <script setup>
 import { computed, ref, useId } from "vue";
+import { displayValue } from "./eventPresentation.js";
 
 const props = defineProps({
   entry: { type: Object, required: true },
   terminal: Boolean,
+  workspace: String,
 });
 const emit = defineEmits(["announce"]);
 
@@ -13,7 +15,7 @@ const error = computed(() => props.entry.tool?.error);
 const output = computed(() => props.entry.command?.output ?? props.entry.tool?.output);
 const capturedText = computed(() => [error.value, output.value]
   .filter((value) => value != null && value !== "")
-  .map(displayValue).join("\n\n"));
+  .map(formatValue).join("\n\n"));
 const preview = computed(() => capturedText.value.slice(0, 2000).split("\n").slice(0, 15).join("\n"));
 const jsonOpen = ref(false);
 const outputOpen = ref(false);
@@ -21,8 +23,8 @@ const outputId = useId();
 const longOutput = computed(() => preview.value !== capturedText.value);
 const copyStatus = ref("");
 
-function displayValue(value) {
-  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+function formatValue(value) {
+  return displayValue(value, props.workspace);
 }
 
 async function copyOutput() {
@@ -48,7 +50,7 @@ async function copyOutput() {
     </dl>
     <section v-if="input != null" class="action-section" aria-label="Entrada">
       <h3 class="run-kicker">Entrada</h3>
-      <pre tabindex="0" aria-label="Entrada da ação">{{ displayValue(input) }}</pre>
+      <pre tabindex="0" aria-label="Entrada da ação">{{ formatValue(input) }}</pre>
     </section>
     <section v-if="entry.command || entry.tool" class="action-section" aria-label="Saída">
       <h3 class="run-kicker">Saída capturada</h3>
@@ -72,7 +74,7 @@ async function copyOutput() {
       <button v-if="capturedText" type="button" class="link-button" @click="copyOutput">Copiar</button>
       <details class="action-json" @toggle="jsonOpen = $event.currentTarget.open">
         <summary>Ver evento JSON</summary>
-        <pre v-if="jsonOpen" tabindex="0" aria-label="JSON do evento">{{ JSON.stringify(entry.command?.records ?? entry.records ?? entry.event, null, 2) }}</pre>
+        <pre v-if="jsonOpen" tabindex="0" aria-label="JSON do evento">{{ formatValue(entry.command?.records ?? entry.records ?? entry.event) }}</pre>
       </details>
       <span>{{ copyStatus }}</span>
     </div>
@@ -80,7 +82,7 @@ async function copyOutput() {
       <summary>Detalhes técnicos</summary>
       <template v-if="entry.command?.command">
         <p>Comando completo</p>
-        <pre tabindex="0" aria-label="Comando completo">{{ entry.command.command }}</pre>
+        <pre tabindex="0" aria-label="Comando completo">{{ formatValue(entry.command.command) }}</pre>
       </template>
       <p v-if="entry.completedOffset != null">Fim observado {{ entry.completedOffset }}</p>
       <p v-if="entry.command?.startMissing">Início ausente dos eventos exibidos.</p>

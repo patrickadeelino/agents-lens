@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandTitle, describeEvent, displayCommand, formatDuration, formatOffset, trajectoryRows } from "../src/eventPresentation.js";
+import { commandTitle, describeEvent, displayCommand, displayValue, formatDuration, formatOffset, maskPaths, trajectoryRows } from "../src/eventPresentation.js";
 
 test("Essential folds only adjacent technical events and leaves failures inspectable", () => {
   const rows = [
@@ -26,8 +26,21 @@ test("shell display preserves literal quotes and unwraps only a single literal a
   assert.equal(displayCommand('/usr/bin/zsh -lc "cat \\"a b\\""'), 'cat "a b"');
   assert.equal(displayCommand("bash -lc 'printf '\\''%s'\\'' abc'"), "printf '%s' abc");
   assert.equal(displayCommand("sh -c 'printf \"%s\" \"$HOME\"'"), 'printf "%s" "$HOME"');
+  assert.equal(displayCommand("/opt/bin/zsh -lic 'rg \"Agent Lens\" README.md'"), 'rg "Agent Lens" README.md');
   assert.equal(displayCommand('bash -lc "echo $HOME"'), 'bash -lc "echo $HOME"');
   assert.equal(displayCommand("sh -c 'echo hi' alternate"), "sh -c 'echo hi' alternate");
+});
+
+test("path masking is limited to display and prefers a known workspace over the home alias", () => {
+  const workspace = "/home/example/my project";
+  const record = { path: workspace, command: `cat "${workspace}/README.md"`, home: "/Users/other/.codex/AGENTS.md" };
+  assert.equal(maskPaths(record.command, workspace), 'cat "<workspace>/README.md"');
+  assert.equal(maskPaths("/home/example/my project-backup", workspace), "~/my project-backup");
+  assert.deepEqual(JSON.parse(displayValue(record, workspace)), {
+    path: "<workspace>", command: 'cat "<workspace>/README.md"', home: "~/.codex/AGENTS.md",
+  });
+  assert.equal(record.path, workspace);
+  assert.equal(maskPaths("cd /var/scratch", "/var/scratch/"), "cd <workspace>");
 });
 
 test("duration and relative start use the units in the approved screens", () => {

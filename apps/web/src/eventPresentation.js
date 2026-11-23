@@ -53,7 +53,7 @@ export function formatOffset(ns) {
 
 export function displayCommand(raw) {
   if (typeof raw !== "string") return raw;
-  const wrapper = /^(?:\/(?:[\w.-]+\/)*)?(?:bash|zsh|sh)[ \t]+-(?:lc|cl|c)[ \t]+([\s\S]+)$/.exec(raw);
+  const wrapper = /^(?:\/(?:[\w.-]+\/)*)?(?:bash|zsh|sh)[ \t]+-(?:lic|lc|cl|c)[ \t]+([\s\S]+)$/.exec(raw);
   if (!wrapper) return raw;
 
   const argument = wrapper[1].trimEnd();
@@ -72,6 +72,23 @@ export function displayCommand(raw) {
   return command;
 }
 
+export function maskPaths(text, workspace = null) {
+  if (typeof text !== "string") return text;
+  const root = typeof workspace === "string" && workspace.startsWith("/")
+    ? workspace.replace(/\/+$/, "") : "";
+  const escapedRoot = root.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
+  const masked = root
+    ? text.replace(new RegExp("(^|[\\s\"'\x60=:(\\[<{>])" + escapedRoot + "(?=$|[/\\s\"'\x60,;:)\\]}>])", "g"), "$1<workspace>")
+    : text;
+  return masked.replace(/\/(?:home|Users)\/[\w.@+-]+/g, "~");
+}
+
+export function displayValue(value, workspace) {
+  if (typeof value === "string") return maskPaths(value, workspace);
+  const serialized = JSON.stringify(value, (_, item) => maskPaths(item, workspace), 2);
+  return maskPaths(serialized, workspace);
+}
+
 export function statusPresentation(status) {
   const [icon, label] = statuses.get(status) ?? statuses.get("result_unconfirmed");
   return { icon, label, failed: status === "failed" || status === "declined" };
@@ -88,17 +105,19 @@ export function errorMessage(event) {
   return typeof message === "string" && message.trim() ? message : null;
 }
 
-export function describeEvent(event) {
+export function describeEvent(event, workspace) {
   const { item, type } = event;
   const label = itemLabels.get(item?.type) ?? eventLabels.get(type) ?? "Evento do Codex";
-  const markdown = item?.type === "agent_message" && typeof item.text === "string" ? item.text : null;
+  const markdown = item?.type === "agent_message" && typeof item.text === "string"
+    ? maskPaths(item.text, workspace) : null;
   const failed = type === "turn.failed" || type === "error";
   const text = failed ? errorMessage(event) : item?.message ?? item?.text;
   const tasks = item?.type === "todo_list" && Array.isArray(item.items)
     ? item.items.filter((task) => typeof task?.text === "string")
+      .map((task) => ({ ...task, text: maskPaths(task.text, workspace) }))
     : [];
   const technical = !failed && (lifecycleEvents.has(type) || item?.type === "error");
-  return { label, markdown, text: !markdown && typeof text === "string" ? text : null, tasks, failed, technical };
+  return { label, markdown, text: !markdown && typeof text === "string" ? maskPaths(text, workspace) : null, tasks, failed, technical };
 }
 
 export function trajectoryRows(rows, view) {
