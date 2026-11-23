@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandTitle, describeEvent, displayCommand, displayValue, formatDuration, formatOffset, maskPaths, observedRunDuration, trajectoryRows } from "../src/eventPresentation.js";
+import { commandErrorPreview, commandTitle, describeEvent, displayCommand, displayValue, formatDuration, formatOffset, isStartupCommand, maskPaths, observedRunDuration, trajectoryRows } from "../src/eventPresentation.js";
 
 test("Essential folds only adjacent technical events and leaves failures inspectable", () => {
   const rows = [
@@ -60,8 +60,35 @@ test("run duration uses capture offsets and can add time since the live arrival"
 test("plain action titles preserve ambiguity for complex shell commands", () => {
   assert.equal(commandTitle("cat README.md"), "Ler README.md");
   assert.equal(commandTitle("zsh -lc 'cat examples/README.md'"), "Ler README.md");
-  assert.equal(commandTitle("ls -a"), "Listar arquivos, incluindo ocultos");
+  assert.equal(commandTitle("ls -a"), "Listar arquivos");
+  assert.equal(commandTitle("rg -n 'setup' README.md"), "Buscar");
+  assert.equal(commandTitle("grep setup README.md"), "Buscar");
+  assert.equal(commandTitle("sed -n '1,10p' README.md"), "Ler trecho");
+  assert.equal(commandTitle('cat "<workspace>/my guide.md"'), "Ler my guide.md");
   assert.equal(commandTitle("cat README.md | grep setup"), null);
   assert.equal(commandTitle("cat $README"), null);
   assert.equal(commandTitle("cat -n README.md"), null);
+});
+
+test("omitted messages have no prose and startup commands stay outside Essential", () => {
+  const omitted = describeEvent({ type: "item.completed", item: {
+    type: "agent_message", text: "[redacted: intermediate assistant message]",
+  } });
+  assert.equal(omitted.omitted, true);
+  assert.equal(omitted.markdown, null);
+  const workspace = "/home/demo/scratch";
+  assert.equal(isStartupCommand("cat <global-instructions>/RTK.md", workspace), true);
+  assert.equal(isStartupCommand("cat /home/demo/.codex/AGENTS.md", workspace), true);
+  assert.equal(isStartupCommand("cat /home/demo/scratch/AGENTS.md", workspace), false);
+  assert.equal(isStartupCommand("cat AGENTS.md", workspace), false);
+  const rows = [{ key: "boot", startup: true }, { key: "message", ...omitted }];
+  assert.deepEqual(trajectoryRows(rows, "essential"), rows.slice(1));
+  assert.equal(trajectoryRows(rows, "all")[0].groupTitle, "Inicialização e diagnósticos");
+});
+
+test("failed commands preview the last useful line and prefer observed stderr", () => {
+  const command = { records: [], output: "Running rg\nzsh:1: command not found: rg\n\n" };
+  assert.equal(commandErrorPreview(command), "zsh:1: command not found: rg");
+  command.records.push({ event: { type: "item.completed", item: { stderr: "read /Users/demo/test\n" } } });
+  assert.equal(commandErrorPreview(command), "read ~/test");
 });

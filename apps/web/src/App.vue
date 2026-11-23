@@ -6,7 +6,7 @@ import EventRow from "./EventRow.vue";
 import ReplyHighlight from "./ReplyHighlight.vue";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import {
-  commandTitle, describeEvent, describeTool, displayCommand, errorMessage, firstLine, formatDuration, formatOffset, maskPaths,
+  commandErrorPreview, commandTitle, describeEvent, describeTool, displayCommand, errorMessage, formatDuration, formatOffset, isStartupCommand, maskPaths,
   observedRunDuration, reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
 } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
@@ -22,6 +22,7 @@ const runHeader = ref(null);
 const promptEditorOpen = ref(true);
 const submittedPrompt = ref(null);
 const timeline = ref(null);
+const replyBlock = ref(null);
 const trajectoryBar = ref(null);
 const backToTimelineButton = ref(null);
 const returnPosition = shallowRef(null);
@@ -80,7 +81,7 @@ const totalDuration = computed(() => observedRunDuration(firstOffset.value, last
   ticking.value && lastArrival.value != null ? now.value - lastArrival.value : 0));
 const durationLabel = computed(() => historyBefore.value != null ? "trecho carregado" : "medida pelo app");
 const lastReply = shallowRef(null);
-const highlightedReply = computed(() => captureEnded.value ? lastReply.value : null);
+const highlightedReply = computed(() => captureEnded.value && lastReply.value?.markdown ? lastReply.value : null);
 const desktopQuery = window.matchMedia("(min-width: 901px)");
 const desktop = ref(desktopQuery.matches);
 const linkedCall = ref(callFromHash());
@@ -136,7 +137,8 @@ function renderCommand(command) {
   const commandText = maskPaths(displayCommand(command.command), workspaceRoot.value);
   entries.set(key, {
     key, command, commandText, title: commandTitle(commandText), ...status,
-    preview: status.failed ? firstLine(maskPaths(command.output, workspaceRoot.value)) : null,
+    startup: isStartupCommand(displayCommand(command.command), workspaceRoot.value),
+    preview: status.failed ? commandErrorPreview(command, workspaceRoot.value) : null,
     duration: formatDuration(command.observedDurationNs),
     offset: formatOffset(command.records[0].elapsed_ns),
     startedOffset: formatOffset(command.startedOffsetNs),
@@ -194,7 +196,7 @@ function projectRecord({ key, record, duration }) {
   }
   const entry = { key, event, ...describeEvent(event, workspaceRoot.value), offset: formatOffset(record.elapsed_ns) };
   entries.set(key, entry);
-  if (event.type === "item.completed" && entry.markdown?.trim()) lastReply.value = entry;
+  if (event.type === "item.completed" && (entry.markdown?.trim() || entry.omitted)) lastReply.value = entry;
 }
 
 function appendRecord(record, eventId, { live = false, commands = null } = {}) {
@@ -300,9 +302,12 @@ function restoreSelection(runId) {
 
 async function jumpToAction(entry) {
   following.value = false;
+  if (entry.startup && !failedOnly.value) trajectoryView.value = "all";
   if (!entry.failed) failedOnly.value = false;
   await nextTick();
   const row = document.getElementById(`timeline-${entry.key}`);
+  const group = row?.closest("details.technical-events");
+  if (group) group.open = true;
   const trigger = row?.querySelector("button, summary");
   if (!trigger) return;
   row.scrollIntoView({ block: "center" });
@@ -317,7 +322,11 @@ async function jumpToReply(key) {
   const row = document.getElementById(`timeline-${key}`);
   if (!row) return;
   row.scrollIntoView({ block: "center" });
-  row.focus({ preventScroll: true });
+  row.querySelector("button")?.focus({ preventScroll: true });
+}
+
+function jumpToReplyBlock() {
+  replyBlock.value?.$el.focus();
 }
 
 function jumpToFirstFailure() {
@@ -439,11 +448,14 @@ watch([linkedCall, rows, desktop, promptEditorOpen], async () => {
   if (!linkedCall.value || desktop.value || promptEditorOpen.value || detailOpen.value) return;
   const entry = rows.value.find((row) => callId(row) === linkedCall.value);
   if (!entry) return;
-  if (entry.technical) trajectoryView.value = "all";
+  if (entry.technical || entry.startup) trajectoryView.value = "all";
   if (!entry.failed) failedOnly.value = false;
   await nextTick();
   if (detailOpen.value || desktop.value || callId(entry) !== linkedCall.value) return;
-  const trigger = document.getElementById(`timeline-${entry.key}`)?.querySelector("button");
+  const row = document.getElementById(`timeline-${entry.key}`);
+  const group = row?.closest("details.technical-events");
+  if (group) group.open = true;
+  const trigger = row?.querySelector("button");
   if (!trigger) return;
   following.value = false;
   selectedActionKey.value = entry.key;
@@ -843,6 +855,7 @@ onUnmounted(() => {
       </p>
       <ReplyHighlight
         v-if="!promptEditorOpen && highlightedReply"
+        ref="replyBlock"
         :key="highlightedReply.key"
         :entry="highlightedReply"
         @jump="jumpToReply"
@@ -937,13 +950,13 @@ onUnmounted(() => {
               v-for="entry in visibleRows"
               :id="`timeline-${entry.key}`"
               :key="entry.key"
-              v-memo="[entry, desktop, captureEnded, entry.technicalEvents ? selectedActionKey : selectedActionKey === entry.key]"
+              v-memo="[entry, desktop, captureEnded, highlightedReply?.key === entry.key, entry.technicalEvents ? selectedActionKey : selectedActionKey === entry.key]"
               :tabindex="entry.markdown ? -1 : undefined"
               :data-technical-key="entry.technicalEvents?.[0].key"
               :data-event-type="entry.event?.type"
               :data-command-id="entry.command?.id"
               :data-command-status="(entry.command ?? entry.tool)?.status"
-              :class="{ 'trajectory-action': entry.command || entry.tool, 'trajectory-message': entry.markdown }"
+              :class="{ 'trajectory-action': entry.command || entry.tool, 'trajectory-message': entry.markdown || entry.omitted }"
               :data-failure="entry.failed || undefined"
             >
               <ActionRow
@@ -954,8 +967,14 @@ onUnmounted(() => {
                 :terminal="captureEnded"
                 @select="selectAction"
               />
-              <TechnicalEvents v-else-if="entry.technicalEvents" :events="entry.technicalEvents" :selected-key="selectedActionKey" @select="selectAction" />
-              <EventRow v-else :entry="entry" :selected="selectedActionKey === entry.key" @select="selectAction" />
+              <TechnicalEvents
+                v-else-if="entry.technicalEvents" :events="entry.technicalEvents" :title="entry.groupTitle"
+                :selected-key="selectedActionKey" :desktop="desktop" :terminal="captureEnded" @select="selectAction"
+              />
+              <EventRow
+                v-else :entry="entry" :selected="selectedActionKey === entry.key" :final="highlightedReply?.key === entry.key"
+                @select="selectAction" @jump="jumpToReplyBlock"
+              />
             </li>
           </ol>
           <div v-if="newEvents && !following && !failedOnly" class="new-events">

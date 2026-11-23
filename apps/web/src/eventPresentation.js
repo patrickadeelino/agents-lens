@@ -105,6 +105,31 @@ export function firstLine(text) {
   return line.length > 160 ? `${line.slice(0, 160)}…` : line || null;
 }
 
+export function lastNonEmptyLine(text) {
+  if (typeof text !== "string") return null;
+  const line = text.trimEnd().split(/\r?\n/).at(-1).trim();
+  return firstLine(line);
+}
+
+export function commandErrorPreview(command, workspace) {
+  const stderr = command.records.findLast(({ event }) => (
+    event.type === "item.completed" && typeof event.item?.stderr === "string" && event.item.stderr.trim()
+  ))?.event.item.stderr;
+  return lastNonEmptyLine(maskPaths(stderr ?? command.output, workspace));
+}
+
+export function isOmittedMessage(text) {
+  return typeof text === "string" && /^\s*\[redacted:[^\]]+\]\s*$/i.test(text);
+}
+
+export function isStartupCommand(command, workspace) {
+  if (typeof command !== "string") return false;
+  if (command.includes("<global-instructions>")) return true;
+  // A relative instruction file can belong to the task workspace.
+  const outsideInstruction = /(?:^|[\s"'=])~?\/(?:[^\s"'|;&]*\/)?(?:AGENTS|RTK)\.md(?=$|[\s"'|;&])/;
+  return outsideInstruction.test(maskPaths(command, workspace));
+}
+
 export function errorMessage(event) {
   const message = event.error?.message ?? event.message;
   return typeof message === "string" && message.trim() ? message : null;
@@ -115,6 +140,7 @@ export function describeEvent(event, workspace) {
   const label = itemLabels.get(item?.type) ?? eventLabels.get(type) ?? "Evento do Codex";
   const markdown = item?.type === "agent_message" && typeof item.text === "string"
     ? maskPaths(item.text, workspace) : null;
+  const omitted = isOmittedMessage(markdown);
   const failed = type === "turn.failed" || type === "error";
   const text = failed ? errorMessage(event) : item?.message ?? item?.text;
   const tasks = item?.type === "todo_list" && Array.isArray(item.items)
@@ -122,22 +148,24 @@ export function describeEvent(event, workspace) {
       .map((task) => ({ ...task, text: maskPaths(task.text, workspace) }))
     : [];
   const technical = !failed && (lifecycleEvents.has(type) || item?.type === "error");
-  return { label, markdown, text: !markdown && typeof text === "string" ? maskPaths(text, workspace) : null, tasks, failed, technical };
+  return { label, markdown: omitted ? null : markdown, omitted,
+    text: !markdown && typeof text === "string" ? maskPaths(text, workspace) : null, tasks, failed, technical };
 }
 
 export function trajectoryRows(rows, view) {
-  if (view === "all") return rows;
   if (view === "failures") return rows.filter((entry) => entry.failed);
 
   const visible = [];
   for (const entry of rows) {
-    if (!entry.technical) {
+    if (entry.startup && view !== "all") continue;
+    const title = entry.startup ? "Inicialização e diagnósticos" : null;
+    if (!title && (view === "all" || !entry.technical)) {
       visible.push(entry);
       continue;
     }
     const group = visible.at(-1);
-    if (group?.technicalEvents) group.technicalEvents.push(entry);
-    else visible.push({ key: `technical:${entry.key}`, technicalEvents: [entry] });
+    if (group?.technicalEvents && group.groupTitle === title) group.technicalEvents.push(entry);
+    else visible.push({ key: `technical:${entry.key}`, groupTitle: title, technicalEvents: [entry] });
   }
   return visible;
 }
@@ -145,12 +173,15 @@ export function trajectoryRows(rows, view) {
 export function commandTitle(command) {
   if (typeof command !== "string") return null;
   // Interpret only exact forms with no shell expansion or secondary command.
-  const shell = /^(?:\/bin\/)?(?:bash|zsh|sh) -lc '([^']+)'$/.exec(command);
-  const simpleCommand = shell?.[1] ?? command;
-  const read = /^cat (?:-- )?([A-Za-z0-9_./][A-Za-z0-9_./-]*)$/.exec(simpleCommand);
-  if (read) return `Ler ${read[1].split("/").filter(Boolean).at(-1) ?? read[1]}`;
-  if (simpleCommand === "ls") return "Listar arquivos";
-  if (simpleCommand === "ls -a") return "Listar arquivos, incluindo ocultos";
+  const simpleCommand = displayCommand(command);
+  const read = /^cat (?:-- )?((?:<workspace>\/)?[A-Za-z0-9_./~][A-Za-z0-9_./-]*|"[^"$\x60\\]+"|'[^']+')$/.exec(simpleCommand);
+  if (read) {
+    const file = read[1].replace(/^(['"])(.*)\1$/, "$2");
+    return `Ler ${file.split("/").filter(Boolean).at(-1) ?? file}`;
+  }
+  if (/^ls(?:\s|$)/.test(simpleCommand)) return "Listar arquivos";
+  if (/^(?:rg|grep)(?:\s|$)/.test(simpleCommand)) return "Buscar";
+  if (/^sed[ \t]+-n(?:\s|$)/.test(simpleCommand)) return "Ler trecho";
   return null;
 }
 

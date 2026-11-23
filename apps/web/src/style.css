@@ -216,6 +216,7 @@ textarea::placeholder { color: var(--ink-muted); }
   margin-block-end: 14px;
   border-inline-start: 3px solid var(--line);
   background: var(--surface);
+  scroll-margin-top: calc(var(--topbar-height) + 12px);
 }
 .reply-highlight header {
   display: flex;
@@ -225,12 +226,6 @@ textarea::placeholder { color: var(--ink-muted); }
   gap: 3px 12px;
 }
 .reply-highlight h2 { font-size: 1.05rem; }
-.reply-highlight summary {
-  padding: 4px 0;
-  color: var(--ink-muted);
-  font: inherit;
-  font-size: .875rem;
-}
 
 .run-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 20px; color: var(--ink-muted); font-size: .875rem; }
 .run-stats strong { font-family: var(--font-code); color: var(--ink); }
@@ -314,7 +309,15 @@ h2 { font-size: 1.25rem; letter-spacing: -.025em; }
 }
 .link-button:hover:not(:disabled) { background: var(--surface-muted); }
 
-.event-list { list-style: none; margin: 0; padding: 0; }
+.event-list {
+  --lane-time: 64px;
+  --lane-marker: 20px;
+  --lane-gap: 8px;
+  --lane-inset: 13px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .event-list > li { border-bottom: 1px solid var(--line); background: var(--surface); }
 .event-list > li:focus-visible { outline: 2px solid var(--accent-link); outline-offset: -2px; }
 
@@ -364,6 +367,45 @@ summary:hover { background: var(--surface-muted); }
 .event-select:hover:not(:disabled) { background: transparent; }
 .event-select:focus-visible, .command-select:focus-visible { outline: 2px solid var(--accent-link); outline-offset: 2px; z-index: 1; }
 .event-card a { position: relative; z-index: 2; }
+.event-narrative {
+  display: grid;
+  grid-template-columns: var(--lane-time) var(--lane-marker) minmax(0, 1fr);
+  gap: 0 var(--lane-gap);
+  align-items: baseline;
+  padding-inline: calc(var(--lane-inset) + 5px) var(--lane-inset);
+}
+.event-narrative .narrative-content { max-width: 60ch; min-width: 0; }
+.event-narrative .agent-message { padding: 0; max-block-size: 6lh; overflow: hidden; }
+.event-narrative .agent-message.is-expanded { max-block-size: none; }
+.message-toggle {
+  position: relative;
+  z-index: 2;
+  color: var(--accent-link);
+}
+.message-marker {
+  align-self: start;
+  justify-self: center;
+  width: 8px;
+  height: 8px;
+  margin-block-start: 5px;
+  border: 1px solid var(--ink-muted);
+  border-radius: 50%;
+  background: var(--bg);
+}
+.omitted-message { color: var(--ink-muted); font-size: .875rem; font-style: italic; }
+.omitted-message .message-marker { border-style: dashed; }
+.final-reply-row { color: var(--accent-link); font-size: .875rem; }
+.trajectory-message .event-narrative::before,
+.trajectory-action .command-select::before {
+  position: absolute;
+  inset-block: 0 -1px;
+  inset-inline-start: calc(var(--lane-inset) + var(--lane-time) + var(--lane-gap) + var(--lane-marker) / 2);
+  width: 1px;
+  background: var(--line);
+  content: "";
+}
+.trajectory-message .event-narrative::before { margin-inline-start: 5px; }
+.message-marker, .action-marker { position: relative; }
 .event-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
 .event-label { font: 650 .9rem/1.5 "Space Grotesk Variable", sans-serif; overflow-wrap: anywhere; }
 .event-text { margin-block-start: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -381,13 +423,14 @@ summary:hover { background: var(--surface-muted); }
 .command-summary { font: inherit; }
 
 .command-select {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(3.5rem, max-content) 17px minmax(0, 1fr) minmax(0, max-content);
+  grid-template-columns: var(--lane-time) var(--lane-marker) minmax(0, 1fr) max-content;
   grid-template-areas: "time marker content state" ". . preview duration";
   align-items: start;
-  gap: 2px 9px;
+  gap: 2px var(--lane-gap);
   width: 100%;
-  padding: 12px 13px;
+  padding: 12px var(--lane-inset);
   border: 0;
   border-inline-start: 4px solid transparent;
   border-radius: inherit;
@@ -413,9 +456,9 @@ summary:hover { background: var(--surface-muted); }
 }
 
 .command-offset { grid-area: time; padding-block-start: 2px; }
-.action-marker { grid-area: marker; margin-block-start: 1px; }
+.action-marker { grid-area: marker; margin-block-start: 1px; justify-self: center; background: var(--surface); }
 .command-content { grid-area: content; display: grid; justify-items: start; gap: 3px; min-width: 0; }
-.command-title { font-weight: 700; }
+.command-title { font-size: .875rem; font-weight: 650; }
 .command-literal {
   display: -webkit-box;
   max-width: 100%;
@@ -430,6 +473,7 @@ summary:hover { background: var(--surface-muted); }
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.command-title + .command-literal { color: var(--ink-muted); }
 .command-status { font-size: .875rem; font-weight: 650; gap: 5px; }
 .command-select .command-status { grid-area: state; justify-self: end; text-align: right; }
 .duration { grid-area: duration; justify-self: end; color: var(--ink-muted); font: .75rem/1.5 var(--font-code); }
@@ -626,11 +670,21 @@ pre {
   .prompt-summary summary { padding-block: 8px; gap: 6px; }
   .events-heading { gap: 4px 10px; }
   .trajectory-controls { gap: 3px 8px; }
+  .event-list { --lane-time: 0px; --lane-inset: 8px; }
   .command-select {
-    grid-template-columns: 17px minmax(0, 1fr) fit-content(35%);
+    grid-template-columns: var(--lane-marker) minmax(0, 1fr) fit-content(35%);
     grid-template-areas: "marker content state" ". time duration" ". preview preview";
     padding: 10px 8px;
   }
+  .event-narrative {
+    grid-template-columns: var(--lane-marker) minmax(0, 1fr);
+    grid-template-areas: "marker time" ". content";
+  }
+  .event-narrative .offset { grid-area: time; }
+  .event-narrative .message-marker { grid-area: marker; }
+  .event-narrative > :is(.narrative-content, p) { grid-area: content; }
+  .trajectory-message .event-narrative::before,
+  .trajectory-action .command-select::before { inset-inline-start: calc(var(--lane-inset) + var(--lane-marker) / 2); }
   .command-select .command-status { font-size: .75rem; }
   .failure-preview { white-space: normal; overflow-wrap: anywhere; }
   .command-metadata { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -654,5 +708,5 @@ pre {
   .run-actions button { padding-block: 7px; }
   .reply-highlight { padding: 8px 12px; }
   .action-index summary { padding-block: 8px; }
-  summary, .event-card, pre { padding-inline: 12px; }
+  summary, .event-card:not(.event-narrative), pre { padding-inline: 12px; }
 }
