@@ -6,7 +6,7 @@ const props = defineProps({
 });
 
 const input = computed(() => props.entry.command?.command ?? props.entry.tool?.input);
-const status = computed(() => (props.entry.command ?? props.entry.tool).status);
+const status = computed(() => (props.entry.command ?? props.entry.tool)?.status);
 const error = computed(() => props.entry.tool?.error);
 const output = computed(() => props.entry.command?.output ?? props.entry.tool?.output);
 const capturedText = computed(() => [error.value, output.value]
@@ -31,7 +31,7 @@ async function copyOutput() {
 </script>
 
 <template>
-  <div class="command-detail">
+  <div v-if="entry.command || entry.tool" class="command-detail">
     <dl class="command-metadata">
       <div v-if="entry.startedOffset != null || entry.offset != null">
         <dt>{{ entry.startedOffset != null ? "Início observado" : "Primeira observação" }}</dt>
@@ -77,4 +77,8 @@ async function copyOutput() {
     </details>
     <p v-if="entry.duration" class="measurement-note">A duração mede o intervalo entre a chegada dos eventos de início e de conclusão.</p>
   </div>
+  <details v-else class="action-json event-details" @toggle="jsonOpen = $event.currentTarget.open">
+    <summary>Ver evento JSON</summary>
+    <pre v-if="jsonOpen" tabindex="0" aria-label="JSON do evento">{{ JSON.stringify(entry.event, null, 2) }}</pre>
+  </details>
 </template>

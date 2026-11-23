@@ -1,12 +1,12 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { renderAgentMarkdown } from "./markdown.js";
 
 const props = defineProps({
   entry: { type: Object, required: true },
-  condensed: Boolean,
+  selected: Boolean,
 });
-const jsonOpen = ref(false);
+defineEmits(["select"]);
 const html = computed(() => (
   props.entry.markdown ? renderAgentMarkdown(props.entry.markdown) : ""
 ));
@@ -18,11 +18,7 @@ const html = computed(() => (
       <span class="event-label">{{ entry.label }}</span>
       <span class="offset" title="Tempo decorrido na captura">{{ entry.offset }}</span>
     </div>
-    <details v-if="html && condensed" class="inline-reply">
-      <summary>Ver mensagem</summary>
-      <div class="agent-message" v-html="html"></div>
-    </details>
-    <div v-else-if="html" class="agent-message" v-html="html"></div>
+    <div v-if="html" class="agent-message" v-html="html"></div>
     <p v-else-if="entry.text" class="event-text">{{ entry.text }}</p>
     <ul v-if="entry.tasks.length" class="event-tasks">
       <li v-for="(task, index) in entry.tasks" :key="index">
@@ -31,9 +27,12 @@ const html = computed(() => (
         {{ task.text }}
       </li>
     </ul>
-    <details class="raw-event" @toggle="jsonOpen = $event.currentTarget.open">
-      <summary>Ver evento JSON</summary>
-      <pre v-if="jsonOpen" tabindex="0">{{ JSON.stringify(entry.event, null, 2) }}</pre>
-    </details>
+    <button
+      type="button"
+      class="event-select"
+      :aria-label="['Inspecionar', entry.label, entry.offset].filter(Boolean).join(' ')"
+      :aria-current="selected ? 'true' : undefined"
+      @click="$emit('select', entry, $event.currentTarget)"
+    ><span class="visually-hidden">Inspecionar evento</span></button>
   </article>
 </template>

@@ -4,7 +4,9 @@ import EventRow from "./EventRow.vue";
 
 const props = defineProps({
   events: { type: Array, required: true },
+  selectedKey: String,
 });
+defineEmits(["select"]);
 const expanded = ref(false);
 const title = computed(() => {
   if (props.events.length === 1) return props.events[0].label;
@@ -22,7 +24,7 @@ const title = computed(() => {
     </summary>
     <ol v-if="expanded" class="technical-event-list">
       <li v-for="entry in events" :id="`timeline-${entry.key}`" :key="entry.key">
-        <EventRow :entry="entry" />
+        <EventRow :entry="entry" :selected="selectedKey === entry.key" @select="(...args) => $emit('select', ...args)" />
       </li>
     </ol>
   </details>

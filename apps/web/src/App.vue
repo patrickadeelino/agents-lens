@@ -69,7 +69,6 @@ const selectedActionKey = ref(null);
 const selectedAction = computed(() => entries.get(selectedActionKey.value));
 const selectedTitle = computed(() => selectedAction.value ? actionTitle(selectedAction.value) : "");
 const selectionPending = computed(() => Boolean(selectedActionKey.value && !selectedAction.value));
-const replyCondensed = computed(() => trajectoryView.value === "essential" && !failedOnly.value);
 let controller;
 let historyController;
 let captureRecords = [];
@@ -84,7 +83,7 @@ function commandKey(id) {
 }
 
 function actionTitle(entry) {
-  return entry.title || entry.tool?.name || entry.command?.command || "Comando";
+  return entry.title || entry.tool?.name || entry.command?.command || entry.label;
 }
 
 function renderCommand(command) {
@@ -224,7 +223,9 @@ function rememberSelection(entry) {
   if (!activeRunId.value) return;
   try {
     const key = selectionStorageKey(activeRunId.value);
-    if (entry.command || typeof entry.event?.item?.id === "string") sessionStorage.setItem(key, entry.key);
+    if (entry.command || (entry.tool && typeof entry.event?.item?.id === "string") || entry.key.startsWith("delivery:")) {
+      sessionStorage.setItem(key, entry.key);
+    }
     else sessionStorage.removeItem(key);
   } catch {
     // The inspector still works if browser storage is unavailable.
@@ -257,17 +258,13 @@ async function jumpToReply(key) {
   await nextTick();
   const row = document.getElementById(`timeline-${key}`);
   if (!row) return;
-  const disclosure = row.querySelector(".inline-reply");
-  if (disclosure) disclosure.open = true;
   row.scrollIntoView({ block: "center" });
   row.focus({ preventScroll: true });
 }
 
 function jumpToFirstFailure() {
   const entry = rows.value.find((row) => row.failed);
-  if (!entry) return;
-  if (entry.command || entry.tool) return jumpToAction(entry);
-  return jumpToReply(entry.key);
+  if (entry) return jumpToAction(entry);
 }
 
 async function loadEarlierEvents() {
@@ -678,6 +675,12 @@ onUnmounted(() => {
       <p v-if="promptEditorOpen && (busy || resultFailure || runStatus === 'Execução salva não encontrada')" id="run-status" class="composer-status" role="status">
         {{ runStatus }}<template v-if="failureReason">. {{ failureReason }}</template>
       </p>
+      <ReplyHighlight
+        v-if="!promptEditorOpen && highlightedReply"
+        :key="highlightedReply.key"
+        :entry="highlightedReply"
+        @jump="jumpToReply"
+      />
       <div v-if="!promptEditorOpen && (rows.length || historyBefore != null)" class="run-layout">
         <div class="run-sidebar">
           <aside
@@ -688,10 +691,10 @@ onUnmounted(() => {
             :data-command-status="(selectedAction?.command ?? selectedAction?.tool)?.status"
           >
             <div v-if="selectedAction" class="inspector-heading">
-              <span class="run-kicker">{{ selectedAction.command ? "Comando" : "Ferramenta" }}</span>
-              <p class="command-status">
+              <span class="run-kicker">{{ selectedAction.command ? "Comando" : selectedAction.tool ? "Ferramenta" : "Evento" }}</span>
+              <p v-if="selectedAction.command || selectedAction.tool || selectedAction.failed" class="command-status">
                 <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
-                {{ selectedAction.label }}
+                {{ selectedAction.icon ? selectedAction.label : selectedAction.failed ? "Falhou" : selectedAction.label }}
               </p>
               <h2>{{ selectedTitle }}</h2>
             </div>
@@ -746,12 +749,6 @@ onUnmounted(() => {
                   Falhas <span v-if="failureCount" class="failure-count">{{ failureCount }}</span>
                 </button>
               </div>
-              <div class="follow-controls">
-                <span v-if="newEvents" class="unread-events">{{ newEvents === 1 ? "1 novo evento" : `${newEvents} novos eventos` }}</span>
-                <button type="button" class="link-button follow-button" @click="toggleFollowing">
-                  {{ following ? "Pausar acompanhamento" : busy ? "Acompanhar ao vivo" : "Ir ao mais recente" }}
-                </button>
-              </div>
             </div>
           </div>
           <div v-if="historyBefore != null" class="history-controls">
@@ -774,12 +771,12 @@ onUnmounted(() => {
               v-for="entry in visibleRows"
               :id="`timeline-${entry.key}`"
               :key="entry.key"
-              v-memo="[entry, desktop, selectedActionKey === entry.key, replyCondensed && highlightedReply?.key === entry.key]"
+              v-memo="[entry, desktop, entry.technicalEvents ? selectedActionKey : selectedActionKey === entry.key]"
               :tabindex="entry.markdown ? -1 : undefined"
               :data-technical-key="entry.technicalEvents?.[0].key"
               :data-event-type="entry.event?.type"
               :data-command-id="entry.command?.id"
-              :data-command-status="entry.command?.status"
+              :data-command-status="(entry.command ?? entry.tool)?.status"
               :class="{ 'trajectory-action': entry.command || entry.tool, 'trajectory-message': entry.markdown }"
               :data-failure="entry.failed || undefined"
             >
@@ -790,18 +787,17 @@ onUnmounted(() => {
                 :selected="selectedActionKey === entry.key"
                 @select="selectAction"
               />
-              <TechnicalEvents v-else-if="entry.technicalEvents" :events="entry.technicalEvents" />
-              <EventRow v-else :entry="entry" :condensed="replyCondensed && highlightedReply?.key === entry.key" />
+              <TechnicalEvents v-else-if="entry.technicalEvents" :events="entry.technicalEvents" :selected-key="selectedActionKey" @select="selectAction" />
+              <EventRow v-else :entry="entry" :selected="selectedActionKey === entry.key" @select="selectAction" />
             </li>
           </ol>
+          <div v-if="newEvents && !following && !failedOnly" class="new-events">
+            <button type="button" class="secondary" @click="toggleFollowing">
+              <span aria-hidden="true">↓</span> {{ newEvents === 1 ? "1 novo evento" : `${newEvents} novos eventos` }}
+            </button>
+          </div>
         </section>
       </div>
-      <ReplyHighlight
-        v-if="!promptEditorOpen && highlightedReply"
-        :key="highlightedReply.key"
-        :entry="highlightedReply"
-        @jump="jumpToReply"
-      />
     </div>
 
     <section
@@ -818,10 +814,10 @@ onUnmounted(() => {
       >
         <span aria-hidden="true">←</span> Voltar à trajetória
       </button>
-      <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool).status">
+      <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool)?.status">
         <header class="narrow-command-heading">
-          <span class="run-kicker">{{ selectedAction.command ? "Comando" : "Ferramenta" }}</span>
-          <p class="command-status">
+          <span class="run-kicker">{{ selectedAction.command ? "Comando" : selectedAction.tool ? "Ferramenta" : "Evento" }}</span>
+          <p v-if="selectedAction.command || selectedAction.tool" class="command-status">
             <span class="status-symbol" aria-hidden="true">{{ selectedAction.icon }}</span>
             {{ selectedAction.label }}
           </p>
