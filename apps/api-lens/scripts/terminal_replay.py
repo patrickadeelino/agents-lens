@@ -3,9 +3,9 @@
 from collections.abc import Iterable
 from typing import TextIO
 
-from src.domain.command_execution import CommandExecutionState
+from src.domain.command_execution import CommandExecutions, CommandExecutionState
 from src.domain.trace_events import TraceEvent
-from src.domain.trace_reader import TraceRecord, read_trace
+from src.domain.trace_reader import read_trace
 
 
 class TerminalReplay:
@@ -18,51 +18,24 @@ class TerminalReplay:
 
     def replay(self, lines: Iterable[str]) -> dict[str, CommandExecutionState]:
         """Display the observed command transitions and return the items by ID."""
-        commands: dict[str, CommandExecutionState] = {}
+        commands = CommandExecutions()
 
         for record in read_trace(lines):
             if record.event.type in {"turn.started", "turn.completed", "turn.failed"}:
                 self._write_turn(record.event)
-            elif record.event.type in {"item.started", "item.completed"}:
-                self._apply_command_event(record, commands)
+            elif (command := commands.observe(record)) is not None:
+                self._write_command_status(command)
+                if record.event.type == "item.completed":
+                    self._write_completion(command)
 
-        self._finish_pending(commands.values())
-        return commands
+        self._finish_pending(commands.by_id.values())
+        return commands.by_id
 
     def _write_turn(self, event: TraceEvent) -> None:
         self._write_line(f"[{event.type}]")
         if event.type == "turn.failed":
             event_data = event.model_extra or {}
             self._write_line(f'  {event_data["error"]["message"]}')
-
-    def _apply_command_event(
-        self, record: TraceRecord, commands: dict[str, CommandExecutionState]
-    ) -> None:
-        event_data = record.event.model_extra or {}
-        item = event_data["item"]
-        if item["type"] != "command_execution":
-            return
-
-        item_id = item["id"]
-        command = commands.get(item_id)
-        if command is None:
-            command = CommandExecutionState(
-                item_id=item_id, command=item["command"], status=item["status"]
-            )
-            commands[item_id] = command
-
-        command.command = item.get("command", command.command)
-        command.status = item.get("status", command.status)
-        command.aggregated_output = item.get("aggregated_output", command.aggregated_output)
-        command.exit_code = item.get("exit_code", command.exit_code)
-
-        if record.event.type == "item.started" and command.started_offset_ns is None:
-            command.started_offset_ns = record.elapsed_ns
-        self._write_command_status(command)
-
-        if record.event.type == "item.completed":
-            command.completed_offset_ns = record.elapsed_ns
-            self._write_completion(command)
 
     def _write_command_status(self, command: CommandExecutionState) -> None:
         self._write_line(f"[{command.status}] {command.item_id} {command.command}")

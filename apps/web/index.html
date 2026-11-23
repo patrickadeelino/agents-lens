@@ -79,7 +79,7 @@
     }
     summary:hover { background: #1d2934; }
     .agent-message { padding: 0 20px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .offset { margin-left: 12px; color: #a7b4c2; white-space: nowrap; }
+    .offset, .duration { margin-left: 12px; color: #a7b4c2; white-space: nowrap; }
     pre {
       margin: 0;
       padding: 12px 20px 18px;
@@ -132,7 +132,7 @@
     const status = document.querySelector("#status");
     const milliseconds = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
 
-    function appendRecord(record) {
+    function appendRecord(record, commands) {
       const event = record.event;
       const row = document.createElement("li");
       const details = document.createElement("details");
@@ -149,6 +149,15 @@
       payload.textContent = JSON.stringify(event, null, 2);
 
       summary.append(label, offset);
+      if (commands && event.type === "item.completed" && event.item?.type === "command_execution") {
+        const durationNs = commands[event.item.id]?.observed_duration_ns;
+        const duration = document.createElement("span");
+        duration.className = "duration";
+        duration.textContent = durationNs == null
+          ? "Duração indisponível"
+          : milliseconds.format(durationNs / 1_000_000) + " ms de duração observada";
+        summary.append(duration);
+      }
       details.append(summary, payload);
       if (event.type === "item.completed" && event.item?.type === "agent_message") {
         const message = document.createElement("p");
@@ -221,6 +230,18 @@
       }
     }
 
+    function saveRunInUrl(runId) {
+      const url = new URL(window.location.href);
+      if (runId) url.searchParams.set("run_id", runId);
+      else url.searchParams.delete("run_id");
+      window.history.replaceState(null, "", url);
+    }
+
+    function observedTurn(previous, record) {
+      const type = record.event.type;
+      return ["turn.started", "turn.completed", "turn.failed"].includes(type) ? type : previous;
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (execute.disabled) return;
@@ -230,6 +251,7 @@
         return;
       }
 
+      saveRunInUrl(null);
       begin("Enviando prompt");
       try {
         const response = await fetch("/runs", {
@@ -242,13 +264,13 @@
           return;
         }
 
+        saveRunInUrl(response.headers.get("X-Run-ID"));
         setStatus("open", "Recebendo eventos");
         let turn;
         for await (const frame of readFrames(response.body)) {
           if (frame.name === "record") {
             appendRecord(frame.data);
-            const type = frame.data.event.type;
-            if (type === "turn.completed" || type === "turn.failed") turn = type;
+            turn = observedTurn(turn, frame.data);
           } else if (frame.name === "end") {
             finishRun(frame.data.exit_code, turn, frame.data.error);
             return;
@@ -261,6 +283,7 @@
     });
 
     replay.addEventListener("click", () => {
+      saveRunInUrl(null);
       begin("Conectando ao replay");
       const source = new EventSource("/events");
       function finishReplay(state, message) {
@@ -273,6 +296,57 @@
       source.addEventListener("end", () => finishReplay("end", "Replay concluído"));
       source.addEventListener("error", () => finishReplay("error", "Conexão do replay interrompida"));
     });
+
+    async function fetchHistory(runPath) {
+      while (true) {
+        const response = await fetch(`${runPath}/events`);
+        if (response.status !== 409) return response;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+
+    function followRun(runPath, page) {
+      let turn = page.last_turn;
+      const source = new EventSource(`${runPath}/stream?after=${page.latest_event_id ?? 0}`);
+      source.addEventListener("open", () => setStatus("open", "Recebendo eventos"));
+      source.addEventListener("record", (message) => {
+        const record = JSON.parse(message.data);
+        appendRecord(record);
+        turn = observedTurn(turn, record);
+      });
+      source.addEventListener("end", (message) => {
+        source.close();
+        const result = JSON.parse(message.data);
+        finishRun(result.exit_code, turn, result.error);
+      });
+      source.addEventListener("error", () => {
+        if (source.readyState === EventSource.CLOSED) finish("error", "Falha ao acompanhar a execução");
+        else setStatus("connecting", "Reconectando à execução");
+      });
+    }
+
+    async function loadHistory(runId) {
+      begin("Carregando histórico da execução");
+      try {
+        const runPath = `/runs/${encodeURIComponent(runId)}`;
+        const response = await fetchHistory(runPath);
+        if (!response.ok) {
+          finish("error", response.status === 404 ? "Execução salva não encontrada" : "Falha ao carregar o histórico");
+          return;
+        }
+
+        const page = await response.json();
+        for (const { record } of page.events) {
+          appendRecord(record, page.commands);
+        }
+        followRun(runPath, page);
+      } catch {
+        finish("error", "Falha ao carregar o histórico");
+      }
+    }
+
+    const runId = new URLSearchParams(window.location.search).get("run_id");
+    if (runId) loadHistory(runId);
   </script>
 </body>
 </html>

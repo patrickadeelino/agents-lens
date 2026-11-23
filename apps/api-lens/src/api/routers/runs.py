@@ -13,7 +13,7 @@ from opentelemetry.trace import INVALID_SPAN, Span, use_span
 from starlette.requests import ClientDisconnect
 from starlette.types import Send
 
-from src.api.dependencies import get_prompt_capture
+from src.api.dependencies import PromptCapture, get_prompt_capture
 from src.api.sse import ClosingStreamingResponse, end_frame, record_frame
 from src.application.capture_run import CaptureResult, CaptureRun, FlushedRecord
 from src.observability import (
@@ -102,7 +102,12 @@ class RunStreamingResponse(ClosingStreamingResponse):
 @router.post(
     "/runs",
     response_class=StreamingResponse,
-    responses={200: {"content": {"text/event-stream": {}}}},
+    responses={200: {
+        "content": {"text/event-stream": {}},
+        "headers": {"X-Run-ID": {"description": "ID of the saved capture", "schema": {"type": "string"}}},
+    }},
 )
-def prompt_run(capture: Annotated[CaptureRun, Depends(get_prompt_capture)]) -> StreamingResponse:
-    return RunStreamingResponse(capture)
+def prompt_run(run: Annotated[PromptCapture, Depends(get_prompt_capture)]) -> StreamingResponse:
+    response = RunStreamingResponse(run.capture)
+    response.headers["X-Run-ID"] = run.run_id
+    return response

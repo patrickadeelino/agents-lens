@@ -1,6 +1,13 @@
 services:
   frontend:
     build: ./apps/web
+    volumes:
+      - type: bind
+        source: ./apps/web
+        target: /usr/share/nginx/html
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       backend:
         condition: service_healthy
@@ -11,11 +18,18 @@ services:
     build:
       context: .
       dockerfile: apps/api-lens/Dockerfile
+    command: ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
       AGENT_LENS_OTEL_ENABLED: "${AGENT_LENS_OTEL_ENABLED:-0}"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       AGENT_LENS_EXECUTOR_SOCKET: "${AGENT_LENS_HOST_SOCKET_DIR:+/executor-ipc/executor.sock}"
     volumes:
+      - type: bind
+        source: ./apps/api-lens
+        target: /app/apps/api-lens
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ${AGENT_LENS_HOST_SOCKET_DIR:-./examples/empty-executor-ipc}
         target: /executor-ipc

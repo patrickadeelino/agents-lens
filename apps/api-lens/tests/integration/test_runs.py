@@ -83,6 +83,23 @@ if prompt == "measure command spans":
     raise SystemExit(0)
 if prompt == "exit 7":
     raise SystemExit(7)
+if prompt == "stream across reconnect":
+    state = Path(os.environ["CODEX_HOME"])
+    def wait_for(marker):
+        deadline = time.monotonic() + 10
+        while not (state / marker).exists():
+            if time.monotonic() >= deadline:
+                raise SystemExit(8)
+            time.sleep(0.01)
+
+    for sequence in range(2, 34):
+        print(json.dumps({"type": "future.event", "sequence": sequence}), flush=True)
+    wait_for("emit-34")
+    print(json.dumps({"type": "future.event", "sequence": 34}), flush=True)
+    wait_for("emit-35")
+    print(json.dumps({"type": "turn.completed", "sequence": 35}), flush=True)
+    wait_for("finish-run")
+    raise SystemExit(0)
 release = Path(os.environ["CODEX_HOME"]) / "release"
 deadline = time.monotonic() + 5
 while not release.exists():
@@ -184,6 +201,55 @@ def next_frame(lines: Iterator[str]) -> tuple[str, dict[str, object]]:
 def capture_directory(workspace: Path) -> Path:
     (directory,) = (workspace / "captures").glob("codex-prompt-*")
     return directory
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_run_stream_bridges_history_and_live_capture(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+) -> None:
+    backend, _ = live_http
+    with backend.stream("POST", "/runs", json={"prompt": "stream across reconnect"}) as response:
+        assert response.status_code == 200
+        run_id = response.headers["X-Run-ID"]
+        original = response.iter_lines()
+        assert [next_frame(original)[0] for _ in range(33)] == ["record"] * 33
+
+    directory = capture_directory(run_workspace)
+    assert run_id == directory.name
+    run_url = f"/runs/{run_id}"
+    history = backend.get(run_url + "/events")
+    assert history.status_code == 200
+    assert history.json()["latest_event_id"] == 33
+    (run_workspace / "emit-34").touch()
+
+    trace = directory / "events.timed.jsonl"
+    deadline = monotonic() + 3
+    while b'"sequence": 34' not in trace.read_bytes():
+        if monotonic() >= deadline:
+            pytest.fail("Event 34 was not saved before connecting")
+        sleep(0.01)
+
+    with backend.stream("GET", run_url + "/stream", params={"after": 33}) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].split(";")[0] == "text/event-stream"
+        frames = response.iter_lines()
+        assert next(frames) == "id: 34"
+        kind, record = next_frame(frames)
+        assert (kind, record["event"]) == ("record", {"type": "future.event", "sequence": 34})
+
+        (run_workspace / "emit-35").touch()
+        assert next(frames) == "id: 35"
+        kind, record = next_frame(frames)
+        assert (kind, record["event"]) == ("record", {"type": "turn.completed", "sequence": 35})
+        assert not (directory / "result.json").exists()
+
+        (run_workspace / "finish-run").touch()
+        assert next_frame(frames) == ("end", {"exit_code": 0})
+        assert list(frames) == []
+
+    assert json.loads((directory / "result.json").read_text(encoding="utf-8")) == {"exit_code": 0}
+    assert len(trace.read_text(encoding="utf-8").splitlines()) == 35
+    assert capture_directory(run_workspace) == directory
 
 
 @pytest.mark.parametrize("body", [{}, {"prompt": 42}, {"prompt": "  \n "}, {"prompt": "read", "workspace": "/"}])

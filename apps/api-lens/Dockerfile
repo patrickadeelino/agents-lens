@@ -7,7 +7,8 @@ COPY --from=uv /uv /usr/local/bin/uv
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_PYTHON_DOWNLOADS=never \
-    PATH="/app/apps/api-lens/.venv/bin:$PATH"
+    UV_PROJECT_ENVIRONMENT=/opt/api-lens-venv \
+    PATH="/opt/api-lens-venv/bin:$PATH"
 
 WORKDIR /app/apps/api-lens
 

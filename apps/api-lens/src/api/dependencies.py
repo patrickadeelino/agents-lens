@@ -1,14 +1,20 @@
 """Build the services used by the HTTP routes."""
 
 import os
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from time import monotonic
+from typing import Annotated
 
 from fastapi import HTTPException
+from fastapi import Path as PathParam
 
 from src.application.capture import EventCapture
 from src.application.capture_run import CaptureRun
 from src.application.replay import InvalidReplayOffsets, TimedReplay
+from src.application.run_history import GetRunHistory
+from src.application.run_subscription import SubscribeToRun
 from src.domain.trace_reader import read_timed_trace
 from src.infrastructure.capture_files import CaptureFiles
 from src.infrastructure.executor_client import ExecutorClient
@@ -19,6 +25,15 @@ from .schemas import PromptRequest
 PROJECT_DIR = Path(__file__).resolve().parents[4]
 REPLAY_TRACE = PROJECT_DIR / "examples" / "traces" / "readme-run.timed.sanitized.jsonl"
 CAPTURE_ROOT = PROJECT_DIR / ".captures"
+RunIdPath = Annotated[str, PathParam(pattern=r"^[A-Za-z0-9_-]{1,128}$")]
+
+
+def get_run_history() -> GetRunHistory:
+    return GetRunHistory(partial(CaptureFiles.find, CAPTURE_ROOT))
+
+
+def get_run_subscription() -> SubscribeToRun:
+    return SubscribeToRun(partial(CaptureFiles.find, CAPTURE_ROOT))
 
 
 def get_replay() -> TimedReplay:
@@ -43,7 +58,13 @@ def get_replay() -> TimedReplay:
         return replay
 
 
-def get_prompt_capture(request: PromptRequest) -> CaptureRun:
+@dataclass(frozen=True)
+class PromptCapture:
+    run_id: str
+    capture: CaptureRun
+
+
+def get_prompt_capture(request: PromptRequest) -> PromptCapture:
     socket = os.environ.get("AGENT_LENS_EXECUTOR_SOCKET")
     if not socket:
         event_log("run.rejected", "api", "rejected", error_code="executor_unconfigured")
@@ -57,4 +78,5 @@ def get_prompt_capture(request: PromptRequest) -> CaptureRun:
 
     bind_run_id(output.directory.name)
     event_log("run.accepted", "api", "accepted")
-    return CaptureRun(request.prompt, ExecutorClient(socket).run, EventCapture(), output)
+    capture = CaptureRun(request.prompt, ExecutorClient(socket).run, EventCapture(), output)
+    return PromptCapture(output.directory.name, capture)

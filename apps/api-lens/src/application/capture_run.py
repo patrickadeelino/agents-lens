@@ -3,6 +3,7 @@
 import asyncio
 from asyncio import Queue
 from collections.abc import AsyncGenerator, Callable, Iterable
+from contextlib import AbstractContextManager
 from contextvars import copy_context
 from dataclasses import dataclass
 from time import monotonic_ns
@@ -27,6 +28,8 @@ type ExecutePrompt = Callable[[str, StdoutConsumer], int | None]
 
 class CaptureOutput(Protocol):
     def open_trace(self) -> TextIO: ...
+
+    def track_activity(self) -> AbstractContextManager[None]: ...
 
     def write_result(self, exit_code: int | None) -> None: ...
 
@@ -98,7 +101,7 @@ class CaptureRun:
 
     def _capture_result(self, publish: Callable[[FlushedRecord | None], None]) -> CaptureResult:
         try:
-            with operation_span("run.capture") as span:
+            with self._output.track_activity(), operation_span("run.capture") as span:
                 progress = EventProgress("run.capture.first_record_saved", "capture")
                 result, outcome, code = self._capture_outcome(publish, progress)
                 finish_span(span, outcome, error_code=code)

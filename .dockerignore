@@ -11,6 +11,7 @@
 !apps/api-lens/src/api/routers/*.py
 !apps/api-lens/src/application/*.py
 !apps/api-lens/src/domain/__init__.py
+!apps/api-lens/src/domain/command_execution.py
 !apps/api-lens/src/domain/trace_*.py
 !apps/api-lens/pyproject.toml
 !apps/api-lens/uv.lock
