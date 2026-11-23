@@ -718,11 +718,11 @@ onUnmounted(() => {
               </template>
             </section>
           </aside>
-          <details v-if="actions.length" class="action-index" :open="desktop">
+          <details v-if="desktop && actions.length >= 8" class="action-index" open>
             <summary>Índice de ações <span>{{ actions.length }}{{ historyBefore != null ? " carregadas" : "" }}</span></summary>
             <nav aria-label="Índice de ações da trajetória">
               <ol>
-                <li v-for="entry in actions" :key="entry.key" :data-failure="entry.failed || undefined">
+                <li v-for="entry in actions" :key="entry.key" :data-failure="entry.failed || undefined" :data-command-status="(entry.command ?? entry.tool).status">
                   <button
                     class="index-action"
                     type="button"
@@ -731,8 +731,8 @@ onUnmounted(() => {
                   >
                     <span class="status-symbol" aria-hidden="true">{{ entry.icon }}</span>
                     <span class="visually-hidden">{{ entry.label }}</span>
-                    <span v-if="entry.title || entry.tool" class="index-title">{{ actionTitle(entry) }}</span>
-                    <code v-else>{{ entry.command?.command || entry.tool?.name || "Comando" }}</code>
+                    <code v-if="entry.command" :title="displayCommand(entry.command.command)">{{ displayCommand(entry.command.command) || "Comando" }}</code>
+                    <span v-else class="index-title">{{ entry.tool.name }}</span>
                   </button>
                 </li>
               </ol>

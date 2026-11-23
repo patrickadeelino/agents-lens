@@ -534,8 +534,8 @@ summary:hover { background: var(--surface-muted); }
   color: var(--ink);
 }
 .index-action .status-symbol { flex: none; }
-.index-action code { font: .8rem/1.5 var(--font-code); overflow-wrap: anywhere; }
-.index-title { overflow-wrap: anywhere; }
+.index-action code { font: .8rem/1.5 var(--font-code); }
+.index-action :is(code, .index-title) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .index-action[aria-current="true"] { border-color: var(--line); background: var(--surface-muted); color: var(--accent-link); }
 
 pre {
