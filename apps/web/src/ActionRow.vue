@@ -30,14 +30,18 @@ const accessibleName = computed(() => [
     :aria-label="accessibleName"
     @click="$emit('select', entry, $event.currentTarget)"
   >
-    <span class="command-offset" title="Primeira observação na captura">{{ entry.offset }}</span>
     <span class="status-symbol action-marker" aria-hidden="true">{{ entry.icon }}</span>
     <span class="command-content">
       <span v-if="entry.title || entry.tool" class="command-title">{{ entry.title || name }}</span>
       <code v-if="entry.command" class="command-literal" :title="name">{{ name }}</code>
     </span>
     <span class="command-status">{{ label }}</span>
-    <span v-if="entry.duration" class="duration" title="Duração observada">{{ entry.duration }}</span>
+    <span class="command-times">
+      <span v-if="entry.offset" class="command-offset" title="Primeira observação na captura">
+        <span v-if="label === 'Em andamento' && entry.startedOffset" class="pending-offset">início </span>{{ entry.offset }}
+      </span>
+      <span v-if="entry.duration" class="duration" title="Duração observada">{{ entry.duration }}</span>
+    </span>
     <span v-if="entry.preview" class="failure-preview">{{ entry.preview }}</span>
     <span v-else-if="entry.tool && (entry.failed || entry.toolPreview)" class="failure-preview">
       {{ entry.failed ? lastNonEmptyLine(entry.toolError) || entry.label : firstLine(entry.toolPreview) }}

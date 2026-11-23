@@ -462,6 +462,8 @@ summary:hover { background: var(--surface-muted); }
 }
 
 .command-offset { grid-area: time; padding-block-start: 2px; }
+.command-times { display: contents; }
+.pending-offset { display: none; }
 .action-marker { grid-area: marker; margin-block-start: 1px; justify-self: center; background: var(--surface); }
 .command-content { grid-area: content; display: grid; justify-items: start; gap: 3px; min-width: 0; }
 .command-title { font-size: .875rem; font-weight: 650; }
@@ -679,9 +681,21 @@ pre {
   .event-list { --lane-time: 0px; --lane-inset: 8px; }
   .command-select {
     grid-template-columns: var(--lane-marker) minmax(0, 1fr) fit-content(35%);
-    grid-template-areas: "marker content state" ". time duration" ". preview preview";
+    grid-template-areas: "marker content state" ". times times" ". preview preview";
+    min-block-size: 44px;
     padding: 10px 8px;
   }
+  .command-content:has(.command-literal) .command-title { display: none; }
+  .command-content .command-literal {
+    display: block;
+    text-overflow: ellipsis;
+    white-space: pre;
+    color: var(--ink);
+  }
+  .command-times { display: flex; grid-area: times; align-items: baseline; flex-wrap: wrap; gap: 0 6px; }
+  .command-times .duration::before { content: "· "; }
+  .command-times .command-offset { padding-block-start: 0; }
+  .pending-offset { display: inline; }
   .event-narrative {
     grid-template-columns: var(--lane-marker) minmax(0, 1fr);
     grid-template-areas: "marker time" ". content";
