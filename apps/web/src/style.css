@@ -116,6 +116,7 @@ textarea::placeholder { color: var(--ink-muted); }
 .replay-banner button, .connection-notice button { padding: 5px 10px; font-size: .8rem; }
 .composer-status { margin-block-start: 12px; color: var(--ink-muted); }
 .connection-notice { background: var(--surface-muted); }
+.connection-notice > [role="status"] { flex: 1 1 24ch; }
 .connection-state.is-reconnecting { border-style: dashed; border-color: var(--ink-muted); }
 .recent-runs { margin-block-start: 24px; }
 .recent-runs h2 { font-size: 1rem; }
@@ -123,6 +124,10 @@ textarea::placeholder { color: var(--ink-muted); }
 .recent-runs li { border-bottom: 1px solid var(--line); }
 .recent-runs button { padding: 8px 0; font-family: var(--font-code); overflow-wrap: anywhere; text-align: start; }
 .continuation-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin-block-start: 18px;
   padding: 9px 12px;
   border: 1px dashed var(--line);
@@ -130,6 +135,7 @@ textarea::placeholder { color: var(--ink-muted); }
   color: var(--ink-muted);
   font-size: .875rem;
 }
+.continuation-note button { padding: 5px 10px; font-size: .8rem; }
 
 .run-summary {
   display: grid;

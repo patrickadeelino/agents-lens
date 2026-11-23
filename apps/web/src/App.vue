@@ -690,7 +690,10 @@ function reopen(runId) {
       let turn = page.last_turn;
       const result = await streamSavedRun(runId, page.latest_event_id ?? 0, {
         signal,
-        onOpen: () => { connectionStatus.value = "Recebendo eventos"; },
+        onOpen: () => {
+          lastArrival.value ??= performance.now();
+          connectionStatus.value = "Recebendo eventos";
+        },
         onRecord(record, eventId) {
           if (appendRecord(record, eventId, { live: true })) turn = observedTurn(turn, record);
         },
@@ -806,16 +809,18 @@ onUnmounted(() => {
           </div>
         </div>
         <div v-if="connectionStatus === 'Reconectando' || connectionStatus === 'Interrompida'" class="connection-notice">
+          <div role="status" aria-live="off">
           <p v-if="connectionStatus === 'Reconectando'">
             Conexão perdida.
             <template v-if="lastUpdateSeconds != null">Última atualização há {{ lastUpdateSeconds }} s.</template>
             Tentando novamente. O estado dos comandos em andamento pode estar desatualizado.
           </p>
           <p v-else>Fluxo interrompido. Os eventos exibidos permanecem disponíveis.</p>
+          </div>
           <button v-if="activeRunId" class="secondary" type="button" @click="retryConnection">Tentar agora</button>
         </div>
         <p v-else-if="recovered != null" class="connection-notice">
-          Reconectado{{ recovered ? ` · ${recovered} ${recovered === 1 ? "evento recebido" : "eventos recebidos"}` : "" }}
+          Reconectado · {{ recovered }} {{ recovered === 1 ? "evento recebido" : "eventos recebidos" }}
         </p>
         <div v-if="replayMode" class="replay-banner">
           <p>Replay de eventos gravados. Nenhum modelo está sendo chamado.</p>
@@ -991,7 +996,14 @@ onUnmounted(() => {
           </div>
         </section>
       </div>
-      <p v-if="!promptEditorOpen && replayMode" class="continuation-note">Continuar a conversa não está disponível em replays.</p>
+      <div v-if="!promptEditorOpen" class="continuation-note">
+        <p v-if="replayMode">Continuar a conversa não está disponível em replays.</p>
+        <template v-else-if="busy && !captureEnded">
+          <p>Continuar esta conversa · disponível quando a execução terminar e houver suporte à retomada.</p>
+          <button class="secondary" type="button" disabled>Enviar</button>
+        </template>
+        <p v-else>A retomada desta conversa ainda não está disponível.</p>
+      </div>
     </div>
 
     <section
