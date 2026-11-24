@@ -45,20 +45,11 @@ async function copyOutput() {
 
 <template>
   <div class="command-detail">
-    <dl v-if="entry.command || entry.tool" class="command-metadata">
-      <div v-if="entry.command || entry.offset != null">
-        <dt>{{ entry.command ? "Início observado" : "Primeira observação" }}</dt>
-        <dd>{{ entry.command ? entry.startedOffset ?? "—" : entry.offset }}</dd>
-      </div>
-      <div v-if="entry.command"><dt>Duração observada</dt><dd>{{ entry.duration ?? "—" }}</dd></div>
-      <div v-if="entry.command"><dt>Código de saída</dt><dd>{{ entry.command.exitCode ?? "não informado" }}</dd></div>
-    </dl>
     <section v-if="input != null" class="action-section" aria-label="Entrada">
       <h3 class="run-kicker">Entrada</h3>
       <pre tabindex="0" aria-label="Entrada da ação">{{ formatValue(input) }}</pre>
     </section>
     <section v-if="entry.command || entry.tool" class="action-section" aria-label="Saída">
-      <h3 class="run-kicker">Saída capturada</h3>
       <p v-if="status === 'in_progress'">
         {{ capturedText ? "Saída parcial. A ação está em andamento." : "Aguardando saída." }}
       </p>
@@ -69,7 +60,7 @@ async function copyOutput() {
       </p>
       <pre v-if="capturedText" :id="outputId" class="inspector-code" tabindex="0" :aria-label="longOutput && !outputOpen ? 'Prévia da saída' : 'Saída capturada'">{{ longOutput && !outputOpen ? preview + "…" : capturedText }}</pre>
       <button v-if="longOutput" type="button" class="link-button output-toggle" :aria-controls="outputId" :aria-expanded="outputOpen" @click="outputOpen = !outputOpen">
-        {{ outputOpen ? "Recolher" : "Mostrar tudo" }}
+        {{ outputOpen ? "Recolher saída" : "Mostrar saída completa" }}
       </button>
       <p v-if="!capturedText && status !== 'in_progress' && status !== 'result_unconfirmed'">
         {{ output === "" ? "Saída vazia." : "Saída indisponível." }}
@@ -79,26 +70,37 @@ async function copyOutput() {
       <div v-if="message" class="agent-message" v-html="message"></div>
       <button v-else-if="final" type="button" class="link-button" @click="$emit('jump')">Ler a resposta final ↑</button>
     </section>
-    <div class="inspector-actions">
-      <button v-if="capturedText" type="button" class="link-button" @click="copyOutput">Copiar</button>
-      <details class="action-json" @toggle="jsonOpen = $event.currentTarget.open">
-        <summary>Ver evento JSON</summary>
-        <pre v-if="jsonOpen" tabindex="0" aria-label="JSON do evento">{{ formatValue(entry.command?.records ?? entry.records ?? entry.event) }}</pre>
+    <details class="action-technical">
+      <summary>Detalhes</summary>
+      <div class="inspector-actions">
+        <slot name="controls" />
+        <button v-if="capturedText" type="button" class="link-button" @click="copyOutput">Copiar saída</button>
+        <details class="action-json" @toggle="jsonOpen = $event.currentTarget.open">
+          <summary>Ver evento JSON</summary>
+          <pre v-if="jsonOpen" tabindex="0" aria-label="JSON do evento">{{ formatValue(entry.command?.records ?? entry.records ?? entry.event) }}</pre>
+        </details>
+        <span>{{ copyStatus }}</span>
+      </div>
+
+    <dl v-if="entry.command || entry.tool" class="command-metadata">
+      <div v-if="entry.command || entry.offset != null">
+        <dt>{{ entry.command ? "Início observado" : "Primeira observação" }}</dt>
+        <dd>{{ entry.command ? entry.startedOffset ?? "—" : entry.offset }}</dd>
+      </div>
+      <div v-if="entry.command"><dt>Duração observada</dt><dd>{{ entry.duration ?? "—" }}</dd></div>
+      <div v-if="entry.command"><dt>Código de saída</dt><dd>{{ entry.command.exitCode ?? "não informado" }}</dd></div>
+    </dl>
+
+      <details v-if="entry.command?.command" class="action-json">
+        <summary>Ver original</summary>
+        <pre tabindex="0" aria-label="Comando original">{{ formatValue(entry.command.command) }}</pre>
       </details>
-      <span>{{ copyStatus }}</span>
-    </div>
-    <details v-if="entry.command || entry.tool" class="action-technical">
-      <summary>Detalhes técnicos</summary>
-      <template v-if="entry.command?.command">
-        <p>Comando completo</p>
-        <pre tabindex="0" aria-label="Comando completo">{{ formatValue(entry.command.command) }}</pre>
-      </template>
       <p v-if="entry.completedOffset != null">Fim observado {{ entry.completedOffset }}</p>
       <p v-if="itemId">ID do item <code>{{ itemId }}</code></p>
       <p v-if="runId">ID da execução <code>{{ runId }}</code></p>
       <p v-if="entry.command?.startMissing">Início ausente dos eventos exibidos.</p>
-      <p v-if="(entry.command ?? entry.tool).conflictingResults">Foram recebidos resultados divergentes para esta ação.</p>
-    </details>
+      <p v-if="(entry.command ?? entry.tool)?.conflictingResults">Foram recebidos resultados divergentes para esta ação.</p>
     <p v-if="entry.duration" class="measurement-note">A duração mede o intervalo entre a chegada dos eventos de início e de conclusão.</p>
+    </details>
   </div>
 </template>

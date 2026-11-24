@@ -1,16 +1,10 @@
 <script setup>
 import { computed } from "vue";
-import ActionRow from "./ActionRow.vue";
-import EventRow from "./EventRow.vue";
 
 const props = defineProps({
   events: { type: Array, required: true },
-  selectedKey: String,
   title: String,
-  desktop: Boolean,
-  terminal: Boolean,
 });
-defineEmits(["select"]);
 const title = computed(() => {
   if (props.title) return props.title;
   if (props.events.length === 1) return props.events[0].label;
@@ -29,14 +23,10 @@ const title = computed(() => {
     <ol class="technical-event-list">
       <li
         v-for="entry in events" :id="`timeline-${entry.key}`" :key="entry.key"
-        :data-command-id="entry.command?.id" :data-command-status="entry.command?.status"
+        :data-entry-key="entry.key" :data-command-id="entry.command?.id" :data-command-status="entry.command?.status"
         :data-failure="entry.failed || undefined"
       >
-        <ActionRow
-          v-if="entry.command" :entry="entry" :selected="selectedKey === entry.key"
-          :desktop="desktop" :terminal="terminal" @select="(...args) => $emit('select', ...args)"
-        />
-        <EventRow v-else :entry="entry" :selected="selectedKey === entry.key" @select="(...args) => $emit('select', ...args)" />
+        <slot name="entry" :entry="entry" />
       </li>
     </ol>
   </details>

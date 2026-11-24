@@ -1,1053 +1,761 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowReactive, shallowRef, watch } from "vue";
-import ActionDetails from "./ActionDetails.vue";
-import ActionRow from "./ActionRow.vue";
-import EventRow from "./EventRow.vue";
-import InspectorHeading from "./InspectorHeading.vue";
-import ReplyHighlight from "./ReplyHighlight.vue";
-import TechnicalEvents from "./TechnicalEvents.vue";
-import {
-  commandErrorPreview, commandTitle, describeEvent, describeTool, displayCommand, errorMessage, formatDuration, formatOffset, isStartupCommand, maskPaths,
-  observedRunDuration, reportedTokens, statusPresentation, tokenSummary, trajectoryRows,
-} from "./eventPresentation.js";
-import { loadRunHistory, RunHttpError, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
-import { recentRuns, rememberRun } from "./recentRuns.js";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from "vue";
+import ConversationSidebar from "./ConversationSidebar.vue";
+import ConversationTurn from "./ConversationTurn.vue";
+import HistoricalTrajectory from "./HistoricalTrajectory.vue";
+import TrajectoryPane from "./TrajectoryPane.vue";
+import { inspectionUrl, resolveInspectedRun } from "./conversationNavigation.js";
+import { maskPaths } from "./eventPresentation.js";
+import { loadRunHistory, RunHttpError, streamContinuation, streamPrompt, streamReplay, streamSavedRun } from "./runs.js";
+import { runOutcome, savedOutcome } from "./trajectoryProjection.js";
 import { useRunFeedback } from "./runFeedback.js";
-import { CommandTimeline } from "./timeline.js";
+import { useRunTrajectory } from "./useRunTrajectory.js";
 
+const view = ref("home");
+const navigationError = ref("");
+const threads = ref([]);
+const threadsLoading = ref(false);
+const threadsError = ref(false);
+const conversation = shallowRef(null);
+const activeRunId = ref(null);
+const inspectedRunId = ref(null);
+const focusInspection = ref(false);
+const linkedCall = ref(readCall());
 const prompt = ref("");
 const promptInput = ref(null);
-const topbar = ref(null);
-const topbarHeight = ref(0);
-const runHeader = ref(null);
-const promptEditorOpen = ref(true);
-const submittedPrompt = ref(null);
-const timeline = ref(null);
-const inspector = ref(null);
-const replyBlock = ref(null);
-const trajectoryBar = ref(null);
-const backToTimelineButton = ref(null);
-const returnPosition = shallowRef(null);
-const detailOpen = computed(() => returnPosition.value !== null);
-const entries = shallowReactive(new Map());
-const rows = computed(() => [...entries.values()]);
-const workspaceRoot = ref(null);
-const trajectoryView = ref("essential");
-const failedOnly = ref(false);
-const visibleRows = computed(() => trajectoryRows(rows.value, failedOnly.value ? "failures" : trajectoryView.value));
-const failureCount = computed(() => rows.value.filter((entry) => entry.failed).length);
-const actions = computed(() => rows.value.filter((entry) => entry.command || entry.tool));
-const unconfirmedCount = computed(() => captureEnded.value ? actions.value.filter((entry) =>
-  (entry.command ?? entry.tool).status === "result_unconfirmed").length : 0);
-const activeAction = computed(() => actions.value.findLast((entry) =>
-  (entry.command ?? entry.tool).status === "in_progress"));
-const newEvents = ref(0);
-const following = ref(false);
-const activeRunId = ref(null);
-const recentRunIds = ref(recentRuns());
-const historyBefore = ref(null);
-const loadingHistory = ref(false);
-const historyError = ref("");
-const seenRecordIds = new Set();
+const turnScroller = ref(null);
+const conversationHeading = ref(null);
+const compactHeading = ref(null);
+const historyButton = ref(null);
+const drawer = ref(false);
+const sidebarQuery = window.matchMedia("(min-width: 1201px)");
+const wideSidebar = ref(sidebarQuery.matches);
 const busy = ref(false);
-const replayMode = ref(false);
-const runStatus = ref("Aguardando execução");
-const connectionStatus = ref("Inativa");
-const feedback = useRunFeedback(connectionStatus);
+const composerError = ref("");
+const continuationError = ref("");
+const continuationDrafts = reactive(new Map());
+const observed = reactive(new Map());
+const paneScroll = new Map();
+const model = useRunTrajectory();
+const connection = ref("Inativa");
+const outcome = shallowRef(null);
+const liveLoading = ref(false);
+const feedback = useRunFeedback(connection);
 const { announcement, lastUpdateSeconds, recovered, announce } = feedback;
-const connectionLabel = computed(() => {
-  if (replayMode.value) return "Replay";
+
+let operation;
+let locationRequest;
+let listRequest;
+
+const replay = computed(() => view.value === "replay");
+const turns = computed(() => conversation.value?.turns ?? []);
+const selectedTurn = computed(() => turns.value.find((turn) => turn.run_id === inspectedRunId.value));
+const selectedNumber = computed(() => turns.value.findIndex((turn) => turn.run_id === inspectedRunId.value) + 1 || null);
+const liveTurn = computed(() => turns.value.find((turn) => turn.run_id === activeRunId.value));
+const latestTurn = computed(() => turns.value.at(-1));
+const activeTurn = computed(() => latestTurn.value?.status === "active" ? latestTurn.value : null);
+const activeNumber = computed(() => activeTurn.value ? turns.value.length : null);
+const hasPane = computed(() => replay.value || selectedTurn.value != null);
+const canContinue = computed(() => !busy.value && !activeTurn.value && conversation.value?.continuation?.state === "available");
+const continuationDraft = computed({
+  get: () => continuationDrafts.get(conversation.value?.root_run_id) ?? "",
+  set: (value) => continuationDrafts.set(conversation.value?.root_run_id, value),
+});
+const continuationNote = computed(() => {
+  if (activeTurn.value) return `Disponível quando o turno ${activeNumber.value} terminar.`;
+  if (busy.value) return "Enviando o pedido…";
   return ({
-    "Recebendo eventos": "Ao vivo",
-    "Reconectando": "Reconectando…",
-    "Fluxo encerrado": "Encerrado",
-  })[connectionStatus.value] ?? connectionStatus.value;
+    ephemeral: "Esta execução não salvou uma sessão do Codex.",
+    active: "Aguarde a execução terminar para continuar.",
+    superseded: "Esta conversa tem uma execução mais recente.",
+  })[conversation.value?.continuation?.state] ?? "O Codex não confirmou uma sessão disponível para esta execução.";
 });
-const resultFailure = ref(false);
-const resultDetail = ref(null);
-const turnIssue = ref(null);
-const streamIssue = ref(null);
-const failureReason = computed(() => maskPaths(resultDetail.value
-  ?? (resultFailure.value ? turnIssue.value ?? streamIssue.value : null), workspaceRoot.value));
-const tokens = shallowRef([]);
-const reportedTotal = computed(() => tokenSummary(tokens.value));
-const captureEnded = ref(false);
-const firstOffset = ref(null);
-const lastOffset = ref(null);
-const lastArrival = ref(null);
-const now = ref(0);
-const ticking = computed(() => !replayMode.value && busy.value && !captureEnded.value
-  && connectionStatus.value === "Recebendo eventos"
-  && (runStatus.value === "Em andamento" || runStatus.value === "Aguardando resultado"));
-const totalDuration = computed(() => observedRunDuration(firstOffset.value, lastOffset.value,
-  ticking.value && lastArrival.value != null ? now.value - lastArrival.value : 0));
-const durationLabel = computed(() => historyBefore.value != null ? "trecho carregado" : "medida pelo app");
-const lastReply = shallowRef(null);
-const highlightedReply = computed(() => captureEnded.value && lastReply.value?.markdown ? lastReply.value : null);
-const desktopQuery = window.matchMedia("(min-width: 901px)");
-const desktop = ref(desktopQuery.matches);
-const linkedCall = ref(callFromHash());
-const selectedActionKey = ref(null);
-const selectedAction = computed(() => entries.get(selectedActionKey.value));
-const selectedLabel = computed(() => selectedAction.value?.label === "Não confirmado" && !captureEnded.value
-  ? "Resultado indisponível" : selectedAction.value?.label);
-const selectionPending = computed(() => Boolean(selectedActionKey.value && !selectedAction.value));
-const mobileMetrics = computed(() => [
-  reportedTotal.value ? `${reportedTotal.value.value} tokens` : null,
-  totalDuration.value,
-  `${actions.value.length} ${actions.value.length === 1 ? "ação" : "ações"}`,
-  `${failureCount.value} ${failureCount.value === 1 ? "falha" : "falhas"}`,
-].filter(Boolean).join(" · "));
-let controller;
-let historyController;
-let captureRecords = [];
-let nextRecordKey = 0;
-let commandTimeline = new CommandTimeline();
-let lastScrollY = window.scrollY;
-let refreshScheduled = false;
-let replayOperation;
-let topbarObserver;
-let focusReplyOnReturn = false;
+const connectionLabel = computed(() => ({
+  "Recebendo eventos": "Ao vivo", "Reconectando": "Reconectando…",
+  "Fluxo encerrado": "Encerrado",
+})[connection.value] ?? connection.value);
+const failedTurns = computed(() => turns.value.flatMap((turn, index) => {
+  const count = turnEvidence(turn)?.failures;
+  return count ? [{ runId: turn.run_id, number: index + 1, count }] : [];
+}));
+const sidebarThreads = computed(() => {
+  const current = conversation.value;
+  if (!current || current.legacy) return threads.value;
+  return [current, ...threads.value.filter((thread) => thread.root_run_id !== current.root_run_id)]
+    .sort((a, b) => String(b.last_activity_at ?? "").localeCompare(String(a.last_activity_at ?? "")));
+});
+const liveAction = computed(() => model.data.value.actions.findLast((entry) =>
+  (entry.command ?? entry.tool).status === "in_progress"));
+const isCurrentPane = computed(() => replay.value || inspectedRunId.value === activeRunId.value);
+const paneProps = computed(() => ({
+  key: replay.value ? "replay" : inspectedRunId.value,
+  runId: selectedTurn.value?.run_id,
+  summary: selectedTurn.value?.summary,
+  turnNumber: selectedNumber.value,
+  prompt: selectedTurn.value?.prompt,
+  status: turnLabel(selectedTurn.value?.status),
+  active: !!activeTurn.value && activeTurn.value.run_id === inspectedRunId.value,
+  activeTurnNumber: activeNumber.value,
+  activeConnection: connectionLabel.value,
+  linkedCall: linkedCall.value,
+  initialScroll: paneScroll.get(inspectedRunId.value) ?? 0,
+  focusOnOpen: focusInspection.value,
+}));
 
-watch(ticking, (active, _, onCleanup) => {
-  if (!active) return;
-  const tick = () => { now.value = performance.now(); };
-  tick();
-  const timer = setInterval(tick, 100);
-  onCleanup(() => clearInterval(timer));
+watch([model.data, model.nextBefore], ([data, before]) => {
+  if (activeRunId.value) rememberEvidence(activeRunId.value, data, before);
 });
 
-watch(runStatus, (current) => {
-  if (/^Falh|^Replay concluído|^Concluída|^Resultado não confirmado/.test(current)) announce(current);
-});
-watch(historyError, (message) => { if (message) announce(message); });
-
-function commandKey(id) {
-  return `command:${id}`;
+function turnEvidence(turn) {
+  return turn.summary?.actions != null ? turn.summary : observed.get(turn.run_id);
 }
 
-function actionTitle(entry) {
-  return entry.title || entry.tool?.name || entry.commandText || entry.label;
+function rememberEvidence(runId, data, before) {
+  const partial = before != null || !data.terminal;
+  if (!data.actions.length && (partial || !data.rows.length)) return;
+  const current = observed.get(runId);
+  if (current && !current.partial && partial) return;
+  if (current && partial && current.actions > data.actions.length) return;
+  observed.set(runId, { actions: data.actions.length, failures: data.failures.length, partial, workspace: data.workspace });
 }
 
-function renderCommand(command) {
-  const key = commandKey(command.id);
-  const status = statusPresentation(command.status);
-  const commandText = maskPaths(displayCommand(command.command), workspaceRoot.value);
-  entries.set(key, {
-    key, command, commandText, title: commandTitle(commandText), ...status,
-    startup: isStartupCommand(displayCommand(command.command), workspaceRoot.value),
-    preview: status.failed ? commandErrorPreview(command, workspaceRoot.value) : null,
-    duration: formatDuration(command.observedDurationNs),
-    offset: formatOffset(command.records[0].elapsed_ns),
-    startedOffset: formatOffset(command.startedOffsetNs),
-    completedOffset: formatOffset(command.completedOffsetNs),
-  });
+function turnLabel(status) {
+  return ({ active: "Em andamento", completed: "Concluído", failed: "Falhou", unconfirmed: "Resultado não confirmado" })[status];
 }
 
-function acceptRecord(record, eventId, commands) {
-  if (eventId != null) {
-    const deliveryId = String(eventId);
-    if (seenRecordIds.has(deliveryId)) return null;
-    seenRecordIds.add(deliveryId);
-  }
-
-  const itemId = record.event.item?.id;
-  return {
-    key: eventId == null ? `record:${nextRecordKey++}` : `delivery:${eventId}`,
-    record,
-    duration: commands && Object.hasOwn(commands, itemId) ? commands[itemId].observed_duration_ns : null,
-  };
+function presentedTurn(turn) {
+  if (turn.run_id !== activeRunId.value || turn.assistant_markdown) return turn;
+  return { ...turn, assistant_markdown: model.data.value.reply?.markdown ?? null };
 }
 
-function projectRecord({ key, record, duration }) {
-  const { event } = record;
-  if (event.type === "turn.started") {
-    if (typeof event.cwd === "string" && event.cwd.startsWith("/")) workspaceRoot.value = event.cwd;
-    turnIssue.value = null;
-    streamIssue.value = null;
-    tokens.value = [];
-    lastReply.value = null;
-  }
-  if (event.type === "turn.failed") turnIssue.value = errorMessage(event);
-  if (event.type === "error") streamIssue.value = errorMessage(event);
-  if (event.type === "turn.completed") tokens.value = reportedTokens(event);
-
-  const command = commandTimeline.observe(record, duration);
-  if (command) {
-    renderCommand(command);
-    return;
-  }
-
-  const item = event.item;
-  const toolKey = typeof item?.id === "string" ? JSON.stringify([item.type, item.id]) : key;
-  const previous = entries.get(toolKey);
-  const tool = describeTool(record, previous?.tool);
-  if (tool) {
-    const records = [...(previous?.records ?? []), record];
-    entries.set(toolKey, {
-      key: toolKey, tool: { ...tool, name: maskPaths(tool.name, workspaceRoot.value) }, records, event, ...statusPresentation(tool.status),
-      toolPreview: maskPaths(tool.preview, workspaceRoot.value),
-      toolError: maskPaths(tool.error, workspaceRoot.value),
-      offset: formatOffset(records[0].elapsed_ns),
-    });
-    return;
-  }
-  const entry = { key, event, ...describeEvent(event, workspaceRoot.value), offset: formatOffset(record.elapsed_ns) };
-  entries.set(key, entry);
-  if (event.type === "item.completed" && (entry.markdown?.trim() || entry.omitted)) lastReply.value = entry;
-}
-
-function appendRecord(record, eventId, { live = false, commands = null } = {}) {
-  const accepted = acceptRecord(record, eventId, commands);
-  if (!accepted) return false;
-  captureRecords.push(accepted);
-  observeOffset(record, live);
-  projectRecord(accepted);
-  if (live) {
-    feedback.observe(record, workspaceRoot.value);
-    if (!following.value) newEvents.value++;
-    updateLivePosition();
-  }
-  return true;
-}
-
-function observeOffset(record, live) {
-  const offset = record.elapsed_ns;
-  if (!Number.isFinite(offset) || offset < 0) return;
-  firstOffset.value = Math.min(firstOffset.value ?? offset, offset);
-  if (lastOffset.value != null && offset < lastOffset.value) return;
-  lastOffset.value = offset;
-  if (live) lastArrival.value = now.value = performance.now();
-}
-
-function finishActions() {
-  captureEnded.value = true;
-  for (const command of commandTimeline.finish()) renderCommand(command);
-  for (const [key, entry] of entries) {
-    if (entry.tool && !entry.tool.terminal) {
-      const status = "result_unconfirmed";
-      entries.set(key, { ...entry, tool: { ...entry.tool, status }, ...statusPresentation(status) });
-    }
-  }
-}
-
-function atLatestEvent() {
-  const lastRow = timeline.value?.lastElementChild;
-  return !lastRow || lastRow.getBoundingClientRect().bottom <= window.innerHeight + 24;
-}
-
-function markVisibleEvents() {
-  if (following.value && window.scrollY < lastScrollY && !atLatestEvent()) following.value = false;
-  lastScrollY = window.scrollY;
-  if (!detailOpen.value && !failedOnly.value && atLatestEvent()) newEvents.value = 0;
-}
-
-async function updateLivePosition() {
-  if (refreshScheduled) return;
-  refreshScheduled = true;
-  await nextTick();
-  refreshScheduled = false;
-  if (following.value && window.scrollY < lastScrollY && !atLatestEvent()) following.value = false;
-  if (following.value) timeline.value?.lastElementChild?.scrollIntoView({ block: "end" });
-  lastScrollY = window.scrollY;
-  if (!detailOpen.value && !failedOnly.value && atLatestEvent()) newEvents.value = 0;
-}
-
-async function followLatest(moveFocus = false) {
-  const focusWasOnButton = document.activeElement?.closest(".new-events");
-  failedOnly.value = false;
-  following.value = busy.value;
-  await nextTick();
-  const last = timeline.value?.lastElementChild;
-  last?.scrollIntoView({ block: "end" });
-  if (moveFocus || focusWasOnButton) (last?.querySelector("button, summary") ?? last)?.focus({ preventScroll: true });
-  lastScrollY = window.scrollY;
-  newEvents.value = 0;
-}
-
-function focusInspector() {
-  if (desktop.value) inspector.value?.focus();
-  else if (selectedAction.value) jumpToAction(selectedAction.value);
-}
-
-function filterTrajectory(view) {
-  if (view !== "failures") trajectoryView.value = view;
-  failedOnly.value = view === "failures";
-  following.value = false;
-}
-
-function keepFocusedEventVisible(event) {
-  const toolbar = trajectoryBar.value?.getBoundingClientRect();
-  const target = event.target.getBoundingClientRect();
-  if (toolbar && target.top < toolbar.bottom) {
-    window.scrollBy(0, target.top - toolbar.bottom - 4);
-  }
-}
-
-function selectionStorageKey(runId) {
-  return `agent-lens:action:${runId}`;
-}
-
-function rememberSelection(entry) {
-  if (!activeRunId.value) return;
-  try {
-    const key = selectionStorageKey(activeRunId.value);
-    if (entry.command || (entry.tool && typeof entry.event?.item?.id === "string") || entry.key.startsWith("delivery:")) {
-      sessionStorage.setItem(key, entry.key);
-    }
-    else sessionStorage.removeItem(key);
-  } catch {
-    // The inspector still works if browser storage is unavailable.
-  }
-}
-
-function restoreSelection(runId) {
-  try {
-    selectedActionKey.value = sessionStorage.getItem(selectionStorageKey(runId));
-  } catch {
-    // A blocked browser store does not prevent restoring the run.
-  }
-}
-
-async function jumpToAction(entry) {
-  following.value = false;
-  if (entry.startup && !failedOnly.value) trajectoryView.value = "all";
-  if (!entry.failed) failedOnly.value = false;
-  await nextTick();
-  const row = document.getElementById(`timeline-${entry.key}`);
-  const group = row?.closest("details.technical-events");
-  if (group) group.open = true;
-  const trigger = row?.querySelector("button, summary");
-  if (!trigger) return;
-  row.scrollIntoView({ block: "center" });
-  trigger.focus({ preventScroll: true });
-  selectAction(entry, trigger);
-}
-
-async function jumpToReply(key) {
-  following.value = false;
-  failedOnly.value = false;
-  await nextTick();
-  const row = document.getElementById(`timeline-${key}`);
-  if (!row) return;
-  row.scrollIntoView({ block: "center" });
-  row.querySelector("button")?.focus({ preventScroll: true });
-}
-
-function jumpToReplyBlock() {
-  if (detailOpen.value) {
-    focusReplyOnReturn = true;
-    closeMobileDetail();
-    return;
-  }
-  replyBlock.value?.$el.focus();
-}
-
-function jumpToFirstFailure() {
-  const entry = rows.value.find((row) => row.failed);
-  if (entry) return jumpToAction(entry);
-}
-
-async function loadEarlierEvents() {
-  if (loadingHistory.value || historyBefore.value == null || !activeRunId.value) return;
-  following.value = false;
-  const request = new AbortController();
-  historyController = request;
-  loadingHistory.value = true;
-  historyError.value = "";
-
-  try {
-    const page = await loadRunHistory(activeRunId.value, request.signal, historyBefore.value);
-    if (request.signal.aborted) return;
-    const threshold = trajectoryBar.value?.getBoundingClientRect().bottom ?? 0;
-    const anchor = Array.from(timeline.value?.children ?? []).find((row) => row.getBoundingClientRect().bottom > threshold);
-    const top = anchor?.getBoundingClientRect().top;
-    const technicalKey = anchor?.dataset.technicalKey;
-    const wasExpanded = Boolean(technicalKey && anchor.firstElementChild.open);
-    const focused = document.activeElement;
-    const earlier = page.events.map(({ record, event_id: id }) => acceptRecord(record, id, page.commands)).filter(Boolean);
-    captureRecords = [...earlier, ...captureRecords];
-    for (const { record } of earlier) observeOffset(record, false);
-    historyBefore.value = page.next_before;
-    entries.clear();
-    lastReply.value = null;
-    commandTimeline = new CommandTimeline();
-    for (const record of captureRecords) projectRecord(record);
-    if (captureEnded.value) finishActions();
-    await nextTick();
-    let restoredAnchor = anchor;
-    if (anchor && !anchor.isConnected && technicalKey) {
-      const group = visibleRows.value.find((entry) => entry.technicalEvents?.some(({ key }) => key === technicalKey));
-      if (group) {
-        restoredAnchor = document.getElementById(`timeline-${group.key}`);
-        if (restoredAnchor && wasExpanded) restoredAnchor.firstElementChild.open = true;
-      }
-    }
-    if (restoredAnchor?.isConnected) {
-      window.scrollBy(0, restoredAnchor.getBoundingClientRect().top - top);
-      if (!focused?.isConnected) {
-        restoredAnchor.querySelector("button, summary")?.focus({ preventScroll: true });
-      }
-    }
-  } catch {
-    if (!request.signal.aborted) historyError.value = "Falha ao carregar eventos anteriores. Tente novamente.";
-  } finally {
-    if (historyController === request) {
-      loadingHistory.value = false;
-      historyController = undefined;
-    }
-  }
-}
-
-function updateDesktop(event) {
-  desktop.value = event.matches;
-  if (event.matches) returnToTimeline();
-}
-
-async function selectAction(entry, trigger) {
-  following.value = false;
-  selectedActionKey.value = entry.key;
-  rememberSelection(entry);
-  if (desktop.value) return;
-  const id = callId(entry);
-  if (linkedCall.value !== id) {
-    const url = new URL(window.location.href);
-    url.hash = new URLSearchParams({ call: id }).toString();
-    window.history.pushState({ agentLensDetail: true }, "", url);
-    linkedCall.value = id;
-  }
-  await openMobileDetail(trigger, true);
-}
-
-async function openMobileDetail(trigger, focus) {
-  returnPosition.value = {
-    trigger,
-    scrollY: window.scrollY,
-    triggerTop: trigger.getBoundingClientRect().top,
-  };
-  await nextTick();
-  window.scrollTo(0, 0);
-  if (focus) backToTimelineButton.value?.focus({ preventScroll: true });
-}
-
-async function returnToTimeline() {
-  if (!returnPosition.value) return;
-  const { trigger, scrollY, triggerTop } = returnPosition.value;
-  returnPosition.value = null;
-  await nextTick();
-
-  if (focusReplyOnReturn) {
-    focusReplyOnReturn = false;
-    jumpToReplyBlock();
-    return;
-  }
-  if (trigger.isConnected) {
-    // Earlier rows may have changed height while the trajectory was hidden.
-    const shift = trigger.getBoundingClientRect().top - triggerTop;
-    window.scrollTo(0, window.scrollY + shift);
-    trigger.focus({ preventScroll: true });
-  } else {
-    window.scrollTo(0, scrollY);
-  }
-}
-
-function callId(entry) {
-  return entry.command?.id ?? (entry.tool ? entry.event?.item?.id : null) ?? entry.key;
-}
-
-function callFromHash() {
+function readCall() {
   return new URLSearchParams(window.location.hash.slice(1)).get("call");
 }
 
-function retryConnection() {
-  if (activeRunId.value) window.location.reload();
+function writeLocation(url, state, replace = false) {
+  if (replace) window.history.replaceState(state, "", url);
+  else window.history.pushState(state, "", url);
+  linkedCall.value = readCall();
 }
 
-watch([linkedCall, rows, desktop, promptEditorOpen], async () => {
-  if (!linkedCall.value || desktop.value || promptEditorOpen.value || detailOpen.value) return;
-  const entry = rows.value.find((row) => callId(row) === linkedCall.value);
-  if (!entry) return;
-  if (entry.technical || entry.startup) trajectoryView.value = "all";
-  if (!entry.failed) failedOnly.value = false;
+function canonicalize() {
+  const thread = conversation.value;
+  if (!thread) return;
+  const url = new URL(window.location.href);
+  if (thread.thread_id) {
+    url.searchParams.set("thread_id", thread.thread_id);
+    if (inspectedRunId.value) url.searchParams.set("run_id", inspectedRunId.value);
+    else url.searchParams.delete("run_id");
+  } else {
+    url.searchParams.delete("thread_id");
+    url.searchParams.set("run_id", inspectedRunId.value ?? thread.latest_run_id);
+  }
+  writeLocation(url, { ...window.history.state, closed: !inspectedRunId.value }, true);
+}
+
+function inspectTurn(runId) {
+  if (inspectedRunId.value === runId) return closeInspection();
+  focusInspection.value = true;
+  const openedFromConversation = !inspectedRunId.value;
+  inspectedRunId.value = runId;
+  const url = inspectionUrl(window.location.href, runId);
+  writeLocation(url, { inspection: openedFromConversation });
+}
+
+function inspectActive() {
+  const runId = activeTurn.value?.run_id;
+  if (!runId || inspectedRunId.value === runId) return;
+  paneScroll.delete(runId);
+  inspectTurn(runId);
+}
+
+function inspectFailure(runId) {
+  const card = [...(turnScroller.value?.children ?? [])].find((node) => node.dataset.turnRun === runId);
+  card?.scrollIntoView({ block: "nearest" });
+  if (inspectedRunId.value !== runId) inspectTurn(runId);
+  else document.getElementById("trajectory-title")?.focus({ preventScroll: true });
+}
+
+async function restoreTurnFocus(runId) {
   await nextTick();
-  if (detailOpen.value || desktop.value || callId(entry) !== linkedCall.value) return;
-  const row = document.getElementById(`timeline-${entry.key}`);
-  const group = row?.closest("details.technical-events");
-  if (group) group.open = true;
-  const trigger = row?.querySelector("button");
-  if (!trigger) return;
-  following.value = false;
-  selectedActionKey.value = entry.key;
-  openMobileDetail(trigger, false);
-});
-
-function synchronizeHash() {
-  linkedCall.value = callFromHash();
-  if (!linkedCall.value) returnToTimeline();
+  const card = [...(turnScroller.value?.children ?? [])].find((node) => node.dataset.turnRun === runId);
+  (card?.querySelector(".inspect-turn") ?? conversationHeading.value)?.focus({ preventScroll: true });
 }
 
-function closeMobileDetail() {
-  if (window.history.state?.agentLensDetail) {
+function closeInspection() {
+  const previous = inspectedRunId.value;
+  if (!previous) return;
+  if (window.history.state?.inspection) {
     window.history.back();
     return;
   }
-  const url = new URL(window.location.href);
-  url.hash = "";
-  window.history.replaceState(null, "", url);
-  synchronizeHash();
+  inspectedRunId.value = null;
+  const url = inspectionUrl(window.location.href, null, conversation.value?.latest_run_id);
+  writeLocation(url, { closed: true }, true);
+  restoreTurnFocus(previous);
 }
 
-function saveRunId(runId, keepHash = false) {
-  activeRunId.value = runId;
+function changeActionCall(call) {
   const url = new URL(window.location.href);
-  if (runId) url.searchParams.set("run_id", runId);
-  else url.searchParams.delete("run_id");
-  if (!keepHash) {
-    url.hash = "";
-    linkedCall.value = null;
+  url.hash = call ? new URLSearchParams({ call }).toString() : "";
+  writeLocation(url, window.history.state, true);
+}
+
+function rememberScroll(top) {
+  if (inspectedRunId.value) paneScroll.set(inspectedRunId.value, top);
+}
+
+function closeDrawer(restoreFocus = true) {
+  drawer.value = false;
+  if (restoreFocus) nextTick(() => historyButton.value?.focus({ preventScroll: true }));
+}
+
+function onSidebarChange(event) {
+  wideSidebar.value = event.matches;
+  if (event.matches) closeDrawer(false);
+}
+
+function onEscape(event) {
+  if (event.key !== "Escape") return;
+  if (drawer.value) closeDrawer();
+  else if (inspectedRunId.value && !wideSidebar.value) closeInspection();
+}
+
+async function loadThreads() {
+  listRequest?.abort();
+  const request = new AbortController();
+  listRequest = request;
+  threadsLoading.value = true;
+  threadsError.value = false;
+  try {
+    const response = await fetch("/threads", { signal: request.signal, cache: "no-store" });
+    if (!response.ok) throw new RunHttpError(response.status);
+    const payload = await response.json();
+    request.signal.throwIfAborted();
+    threads.value = payload.threads;
+  } catch {
+    if (!request.signal.aborted) threadsError.value = true;
+  } finally {
+    if (listRequest === request) threadsLoading.value = false;
   }
-  window.history.replaceState(keepHash ? window.history.state : null, "", url);
-  if (runId) recentRunIds.value = rememberRun(runId, recentRunIds.value);
+}
+
+async function fetchConversation(path, signal) {
+  const response = await fetch(path, { signal, cache: "no-store" });
+  if (!response.ok) throw new RunHttpError(response.status);
+  const detail = await response.json();
+  signal.throwIfAborted();
+  return detail;
+}
+
+function byRun(runId, signal) {
+  return fetchConversation(`/threads/by-run/${encodeURIComponent(runId)}`, signal);
+}
+
+function cancelOperation() {
+  operation?.abort();
+  operation = undefined;
+  busy.value = false;
+}
+
+function resetLive(runId = null) {
+  model.reset();
+  feedback.reset();
+  activeRunId.value = runId;
+  outcome.value = null;
+  connection.value = "Inativa";
+  liveLoading.value = false;
+}
+
+function resetView() {
+  locationRequest?.abort();
+  cancelOperation();
+  resetLive();
+  conversation.value = null;
+  inspectedRunId.value = null;
+  focusInspection.value = false;
+  continuationError.value = "";
+  navigationError.value = "";
+}
+
+function beginOperation() {
+  cancelOperation();
+  const request = new AbortController();
+  operation = request;
+  busy.value = true;
+  return request;
+}
+
+function finishOperation(request) {
+  if (operation !== request) return;
+  operation = undefined;
+  busy.value = false;
+  liveLoading.value = false;
+}
+
+async function focusPrompt() {
+  await nextTick();
+  if (view.value === "home" && window.matchMedia("(min-width: 901px) and (pointer: fine)").matches) {
+    promptInput.value?.focus({ preventScroll: true });
+  }
+}
+
+function newConversation() {
+  if (view.value !== "home" || window.location.search || window.location.hash) writeLocation("/", null);
+  closeDrawer(false);
+  resetView();
+  view.value = "home";
+  composerError.value = "";
+  loadThreads();
+  focusPrompt();
+}
+
+function onThreadClick(event) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  closeDrawer(false);
+  const url = new URL(event.currentTarget.href);
+  if (url.search === window.location.search && !window.location.hash && view.value === "thread") return;
+  writeLocation(url, null);
+  restoreLocation({ focus: true });
+}
+
+async function scrollConversationToEnd(focus = false) {
+  await nextTick();
+  if (turnScroller.value) turnScroller.value.scrollTop = turnScroller.value.scrollHeight;
+  if (focus) focusConversationHeading();
+}
+
+function focusConversationHeading() {
+  const heading = window.matchMedia("(max-width: 900px)").matches ? compactHeading.value : conversationHeading.value;
+  heading?.focus({ preventScroll: true });
+}
+
+function provisionalTurn(runId, text) {
+  return {
+    run_id: runId, prompt: text, assistant_markdown: null, submitted_at: new Date().toISOString(), status: "active",
+  };
+}
+
+function provisionalConversation(runId, text, legacy = false) {
+  const turn = provisionalTurn(runId, text);
+  return {
+    thread_id: null, root_run_id: runId, latest_run_id: runId, legacy,
+    title: legacy ? "Execução salva" : (text.trim().replace(/\s+/g, " ").slice(0, 80) || "Conversa"),
+    last_activity_at: turn.submitted_at, status: "active", turns: [turn], continuation: { state: "active" },
+  };
+}
+
+function acceptedRun(runId, text, origin) {
+  const current = conversation.value;
+  resetLive(runId);
+  const turn = provisionalTurn(runId, text);
+  if (origin && current) {
+    conversation.value = {
+      ...current, latest_run_id: runId, status: "active", last_activity_at: turn.submitted_at,
+      turns: [...current.turns, turn], continuation: { state: "active" },
+    };
+    continuationDrafts.delete(current.root_run_id);
+  } else {
+    conversation.value = provisionalConversation(runId, text);
+    prompt.value = "";
+    view.value = "thread";
+  }
+  if (!origin) {
+    const base = new URL(window.location.href);
+    base.searchParams.set("run_id", runId);
+    writeLocation(base, { closed: true });
+    writeLocation(base, { inspection: true });
+  }
+  if (!inspectedRunId.value || inspectedRunId.value === origin) {
+    inspectedRunId.value = runId;
+    focusInspection.value = false;
+    linkedCall.value = null;
+    const url = new URL(window.location.href);
+    url.hash = "";
+    writeLocation(url, window.history.state, true);
+  }
+  canonicalize();
+  connection.value = "Recebendo eventos";
+  scrollConversationToEnd(!origin && !hasPane.value);
+  if (!origin && hasPane.value) nextTick(() => {
+    const destination = window.matchMedia("(max-width: 1200px)").matches
+      ? document.getElementById("trajectory-title") : conversationHeading.value;
+    destination?.focus({ preventScroll: true });
+  });
+  loadThreads();
+}
+
+function appendRecord(record, id) {
+  if (model.append(record, id)) feedback.observe(record, model.data.value.workspace);
+}
+
+function applyOutcome(result) {
+  if (result.terminal) model.finish();
+  outcome.value = result;
+  const current = conversation.value;
+  if (current && current.latest_run_id === activeRunId.value) {
+    conversation.value = {
+      ...current, status: result.status,
+      turns: current.turns.map((turn) => turn.run_id !== activeRunId.value ? turn : {
+        ...turn, status: result.status, assistant_markdown: model.data.value.reply?.markdown ?? turn.assistant_markdown,
+      }),
+    };
+  }
 }
 
 function observedTurn(previous, { event }) {
-  const type = event.type;
-  return ["turn.started", "turn.completed", "turn.failed"].includes(type) ? type : previous;
+  return ["turn.started", "turn.completed", "turn.failed"].includes(event.type) ? event.type : previous;
 }
 
-function runResultLabel(exitCode, error, turn) {
-  if (error === "event_too_large") {
-    return "Captura incompleta. Um evento excedeu o limite de 8 MiB.";
-  }
-  if (turn === "turn.failed" || (Number.isInteger(exitCode) && exitCode !== 0)) {
-    const code = Number.isInteger(exitCode) ? ` (código ${exitCode})` : "";
-    return `Falhou${code}`;
-  }
-  if (exitCode === 0 && turn === "turn.completed") return "Concluída (código 0)";
-  return "Resultado não confirmado";
+function finishCapture(result, turn) {
+  const final = runOutcome(result, turn);
+  applyOutcome(final);
+  connection.value = final.terminal ? "Fluxo encerrado" : "Interrompida";
+  if (final.status !== "completed") announce(turnLabel(final.status));
 }
 
-function showRunResult({ exit_code: exitCode, error }, turn) {
-  if (error !== "capture_unavailable") finishActions();
-  resultFailure.value = turn === "turn.failed" || (Number.isInteger(exitCode) && exitCode !== 0);
-  if (error === "capture_unavailable") resultDetail.value = "A captura ficou indisponível.";
-  if (error === "execution_failed") resultDetail.value = "O executor encerrou sem informar um código de saída.";
-  runStatus.value = runResultLabel(exitCode, error, turn);
-  connectionStatus.value = error === "capture_unavailable" ? "Interrompida" : "Fluxo encerrado";
-}
-
-async function display({ run, connection }, operation, formatErrorLabel) {
-  if (busy.value) return;
-  controller = new AbortController();
-  const { signal } = controller;
-  busy.value = true;
-  historyController?.abort();
-  historyController = undefined;
-  loadingHistory.value = false;
-  historyBefore.value = null;
-  historyError.value = "";
-  captureRecords = [];
-  workspaceRoot.value = null;
-  firstOffset.value = lastOffset.value = lastArrival.value = null;
-  captureEnded.value = false;
-  lastReply.value = null;
-  feedback.reset();
-  nextRecordKey = 0;
-  entries.clear();
-  seenRecordIds.clear();
-  commandTimeline = new CommandTimeline();
-  selectedActionKey.value = null;
-  returnPosition.value = null;
-  trajectoryView.value = "essential";
-  failedOnly.value = false;
-  following.value = false;
-  newEvents.value = 0;
-  resultFailure.value = false;
-  resultDetail.value = null;
-  turnIssue.value = null;
-  streamIssue.value = null;
-  tokens.value = [];
-  runStatus.value = run;
-  connectionStatus.value = connection;
-
+async function refreshConversation(runId, signal, continuationFallback = null) {
   try {
-    await operation(signal);
-  } catch (error) {
-    if (!signal.aborted) {
-      runStatus.value = formatErrorLabel(error);
-      connectionStatus.value = "Interrompida";
-      if (error instanceof RunHttpError && error.status !== 404) resultDetail.value = error.detail;
+    const detail = await byRun(runId, signal);
+    signal.throwIfAborted();
+    conversation.value = detail;
+    canonicalize();
+    loadThreads();
+    return conversation.value;
+  } catch {
+    signal.throwIfAborted();
+    if (continuationFallback && conversation.value?.latest_run_id === runId) {
+      conversation.value = { ...conversation.value, continuation: continuationFallback };
     }
-  } finally {
-    controller = undefined;
-    busy.value = false;
-    following.value = false;
+    return null;
   }
 }
 
-async function openPromptEditor() {
-  runStatus.value = "Aguardando execução";
-  resultFailure.value = false;
-  resultDetail.value = null;
-  promptEditorOpen.value = true;
-  await nextTick();
-  promptInput.value?.focus();
-}
-
-async function showRunHeader() {
-  promptEditorOpen.value = false;
-  const focused = document.activeElement;
-  if (focused?.closest(".run-composer")) {
-    await nextTick();
-    runHeader.value?.focus({ preventScroll: true });
-  }
-}
-
-function execute() {
-  if (busy.value) return;
-  if (!prompt.value.trim()) {
-    runStatus.value = "Digite um prompt para executar.";
-    promptInput.value.focus();
+async function readAcceptedRun(runId, signal) {
+  liveLoading.value = true;
+  const page = await loadRunHistory(runId, signal);
+  signal.throwIfAborted();
+  model.reset();
+  model.initialize(page);
+  liveLoading.value = false;
+  const saved = savedOutcome(page);
+  if (saved.terminal && conversation.value?.status !== "active") {
+    applyOutcome(saved);
+    connection.value = "Fluxo encerrado";
+    await refreshConversation(runId, signal, page.continuation);
     return;
   }
-
-  const sent = prompt.value;
-  saveRunId(null);
-  replayMode.value = false;
-  return display(
-    { run: "Iniciando", connection: "Enviando prompt" },
-    async (signal) => {
-      let turn;
-      const result = await streamPrompt(sent, {
-        signal,
-        onAccepted(runId) {
-          saveRunId(runId);
-          submittedPrompt.value = sent;
-          showRunHeader();
-          runStatus.value = "Em andamento";
-          connectionStatus.value = "Recebendo eventos";
-        },
-        onRecord(record) {
-          appendRecord(record, null, { live: true });
-          turn = observedTurn(turn, record);
-        },
-      });
-      if (result) showRunResult(result, turn);
-      else {
-        runStatus.value = "Resultado não confirmado";
-        connectionStatus.value = "Interrompida";
-      }
+  let turn = page.last_turn;
+  const result = await streamSavedRun(runId, page.latest_event_id ?? 0, {
+    signal,
+    onOpen: () => { connection.value = "Recebendo eventos"; },
+    onRecord(record, id) {
+      appendRecord(record, id);
+      turn = observedTurn(turn, record);
     },
-    (error) => {
-      if (error instanceof RunHttpError) {
-        resultFailure.value = true;
-        resultDetail.value = error.detail;
-        return `Falha ao iniciar a execução (HTTP ${error.status})`;
-      }
-      return "Resultado não confirmado";
-    },
-  );
+    onReconnect: () => { connection.value = "Reconectando"; },
+  });
+  signal.throwIfAborted();
+  finishCapture(result, turn);
+  await refreshConversation(runId, signal);
 }
 
-async function replay() {
-  if (busy.value && !replayOperation) return;
-  if (busy.value) {
-    controller?.abort();
-    await replayOperation;
-    if (busy.value) return;
+function resumeObservation(runId) {
+  const request = beginOperation();
+  if (activeRunId.value !== runId) resetLive(runId);
+  connection.value = "Carregando histórico";
+  return readAcceptedRun(runId, request.signal).catch(() => {
+    if (!request.signal.aborted) connection.value = "Interrompida";
+  }).finally(() => finishOperation(request));
+}
+
+function submitError(error) {
+  if (error instanceof RunHttpError) {
+    return maskPaths(error.detail) || `Falha ao enviar o pedido (HTTP ${error.status}). Seu rascunho foi preservado.`;
   }
-  saveRunId(null);
-  replayMode.value = true;
-  submittedPrompt.value = null;
-  showRunHeader();
-  const operation = display(
-    { run: "Replay em andamento", connection: "Conectando ao replay" },
-    async (signal) => {
-      await streamReplay({
-        signal,
-        onOpen: () => { connectionStatus.value = "Recebendo eventos do replay"; },
-        onRecord: (record, id) => appendRecord(record, id, { live: true }),
-      });
-      finishActions();
-      runStatus.value = "Replay concluído";
-      connectionStatus.value = "Fluxo encerrado";
-    },
-    () => "Replay incompleto",
-  );
-  replayOperation = operation;
-  await operation;
-  if (replayOperation === operation) replayOperation = undefined;
+  return "Envio não confirmado. Confira a conversa mais recente antes de reenviar.";
 }
 
-function reopen(runId) {
-  if (busy.value) return;
-  if (activeRunId.value !== runId) submittedPrompt.value = null;
-  activeRunId.value = runId;
-  replayMode.value = false;
-  showRunHeader();
-  return display(
-    { run: "Restaurando execução", connection: "Carregando histórico" },
-    async (signal) => {
-      const page = await loadRunHistory(runId, signal);
-      saveRunId(runId, new URLSearchParams(window.location.search).get("run_id") === runId);
-      for (const { event_id: eventId, record } of page.events) appendRecord(record, eventId, { commands: page.commands });
-      historyBefore.value = page.next_before;
-      restoreSelection(runId);
-      resultFailure.value = page.status === "failed";
-      runStatus.value = page.status === "completed" || page.status === "failed"
-        ? runResultLabel(page.exit_code, null, page.last_turn)
-        : "Aguardando resultado";
+async function recoverSubmission(runId, signal) {
+  connection.value = "Reconectando";
+  try {
+    await readAcceptedRun(runId, signal);
+  } catch {
+    if (!signal.aborted) connection.value = "Interrompida";
+  }
+}
 
-      let turn = page.last_turn;
-      const result = await streamSavedRun(runId, page.latest_event_id ?? 0, {
-        signal,
-        onOpen: () => {
-          lastArrival.value ??= performance.now();
-          connectionStatus.value = "Recebendo eventos";
-        },
-        onRecord(record, eventId) {
-          if (appendRecord(record, eventId, { live: true })) turn = observedTurn(turn, record);
-        },
-        onReconnect: () => { connectionStatus.value = "Reconectando"; },
-      });
-      showRunResult(result, turn);
-    },
-    (error) => {
-      if (error instanceof RunHttpError && error.status === 404) {
-        promptEditorOpen.value = true;
-        return "Execução salva não encontrada";
-      }
-      return "Falha ao restaurar ou acompanhar a execução";
-    },
-  );
+async function sendPrompt(text, origin = null) {
+  if (busy.value || !text.trim() || (origin && !canContinue.value)) return;
+  composerError.value = "";
+  continuationError.value = "";
+  const request = beginOperation();
+  const { signal } = request;
+  let accepted;
+  let turn;
+  try {
+    const callbacks = {
+      signal,
+      onAccepted(runId) {
+        signal.throwIfAborted();
+        accepted = runId;
+        acceptedRun(runId, text, origin);
+      },
+      onRecord(record) {
+        signal.throwIfAborted();
+        appendRecord(record);
+        turn = observedTurn(turn, record);
+      },
+    };
+    const result = origin ? await streamContinuation(origin, text, callbacks) : await streamPrompt(text, callbacks);
+    signal.throwIfAborted();
+    if (result) {
+      finishCapture(result, turn);
+      await refreshConversation(accepted, signal);
+    } else if (accepted) await recoverSubmission(accepted, signal);
+  } catch (error) {
+    if (signal.aborted) return;
+    if (accepted) await recoverSubmission(accepted, signal);
+    else if (!origin) composerError.value = submitError(error);
+    else if (error instanceof RunHttpError && error.status === 409) {
+      continuationError.value = "A execução de origem já foi continuada. Seu rascunho foi preservado.";
+      const refreshed = await refreshConversation(origin, signal).catch(() => null);
+      if (refreshed?.status === "active") resumeObservation(refreshed.latest_run_id);
+    } else continuationError.value = submitError(error);
+  } finally {
+    finishOperation(request);
+  }
+}
+
+async function openReplay() {
+  if (!replay.value) writeLocation("/?replay=1", null);
+  closeDrawer(false);
+  resetView();
+  view.value = "replay";
+  focusInspection.value = true;
+  const request = beginOperation();
+  connection.value = "Conectando ao replay";
+  try {
+    await streamReplay({
+      signal: request.signal,
+      onOpen: () => { connection.value = "Recebendo eventos"; },
+      onRecord: appendRecord,
+    });
+    request.signal.throwIfAborted();
+    model.finish();
+    connection.value = "Fluxo encerrado";
+    announce("Replay concluído.");
+  } catch {
+    if (!request.signal.aborted) connection.value = "Interrompida";
+  } finally {
+    finishOperation(request);
+  }
+}
+
+async function resolveLocation(params, signal) {
+  const threadId = params.get("thread_id");
+  const requested = params.get("run_id");
+  if (threadId) return fetchConversation(`/threads/${encodeURIComponent(threadId)}`, signal);
+  try {
+    return await byRun(requested, signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    if (!(error instanceof RunHttpError) || ![404, 503].includes(error.status)) throw error;
+    return provisionalConversation(requested, null, true);
+  }
+}
+
+async function restoreLocation({ focus = false } = {}) {
+  resetView();
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("run_id");
+  loadThreads();
+  if (params.has("replay")) return openReplay();
+  if (!params.has("thread_id") && !requested) {
+    view.value = "home";
+    focusPrompt();
+    return;
+  }
+  view.value = "loading";
+  const request = new AbortController();
+  locationRequest = request;
+  try {
+    const detail = await resolveLocation(params, request.signal);
+    request.signal.throwIfAborted();
+    conversation.value = detail;
+    inspectedRunId.value = window.history.state?.closed ? null : resolveInspectedRun(detail, requested);
+    focusInspection.value = !!inspectedRunId.value;
+    view.value = "thread";
+    canonicalize();
+    scrollConversationToEnd(focus && !inspectedRunId.value);
+    if (detail.status === "active") resumeObservation(detail.latest_run_id);
+  } catch {
+    if (request.signal.aborted) return;
+    conversation.value = null;
+    view.value = "home";
+    navigationError.value = "Não foi possível abrir esta conversa.";
+  }
+}
+
+function navigateHistory() {
+  const params = new URLSearchParams(window.location.search);
+  const current = conversation.value;
+  const requested = params.get("run_id");
+  const locationThread = params.get("thread_id");
+  const same = current && (locationThread
+    ? current.thread_id === locationThread
+    : requested != null && current.turns.some((turn) => turn.run_id === requested));
+  linkedCall.value = readCall();
+  if (same) {
+    const previous = inspectedRunId.value;
+    const selected = window.history.state?.closed ? null : requested;
+    if (selected && !current.turns.some((turn) => turn.run_id === selected)) return restoreLocation();
+    if (previous === selected) return;
+    focusInspection.value = !!selected;
+    inspectedRunId.value = selected;
+    if (current.thread_id && !locationThread) canonicalize();
+    if (previous && !selected) restoreTurnFocus(previous);
+    return;
+  }
+  restoreLocation();
+}
+
+function synchronizeHash() {
+  linkedCall.value = readCall();
 }
 
 onMounted(() => {
-  topbarObserver = new ResizeObserver(() => { topbarHeight.value = topbar.value.offsetHeight; });
-  topbarObserver.observe(topbar.value);
-  desktopQuery.addEventListener("change", updateDesktop);
-  window.addEventListener("scroll", markVisibleEvents, { passive: true });
+  sidebarQuery.addEventListener("change", onSidebarChange);
+  window.addEventListener("popstate", navigateHistory);
   window.addEventListener("hashchange", synchronizeHash);
-  const runId = new URLSearchParams(window.location.search).get("run_id");
-  if (runId) reopen(runId);
+  window.addEventListener("keydown", onEscape);
+  restoreLocation();
 });
 
 onUnmounted(() => {
-  topbarObserver?.disconnect();
-  desktopQuery.removeEventListener("change", updateDesktop);
-  window.removeEventListener("scroll", markVisibleEvents);
+  sidebarQuery.removeEventListener("change", onSidebarChange);
+  window.removeEventListener("popstate", navigateHistory);
   window.removeEventListener("hashchange", synchronizeHash);
-  controller?.abort();
-  historyController?.abort();
+  window.removeEventListener("keydown", onEscape);
+  locationRequest?.abort();
+  listRequest?.abort();
+  cancelOperation();
 });
 </script>
 
 <template>
-  <header ref="topbar" class="topbar">
-    <div class="topbar-content">
-      <span class="wordmark">Agent Lens</span>
-      <div class="topbar-context">
-        <span class="workspace"><span class="workspace-full">Workspace de exemplo</span><span class="workspace-short">Exemplo</span> · Somente leitura</span>
-        <div v-if="!promptEditorOpen && !detailOpen" class="topbar-actions">
-          <button class="secondary" type="button" :disabled="busy" @click="openPromptEditor">Nova execução</button>
-          <button class="link-button" type="button" :disabled="busy" @click="replay">Ver replay de exemplo</button>
-        </div>
-      </div>
-    </div>
-  </header>
-
-  <main class="content" :class="{ 'composer-content': promptEditorOpen && !detailOpen }" :style="{ '--topbar-height': `${topbarHeight}px` }">
+  <div class="app-shell" :class="{ 'has-trajectory': hasPane, 'replay-shell': replay, 'drawer-visible': drawer }">
     <p class="visually-hidden" role="status">{{ announcement }}</p>
-    <div v-show="!detailOpen">
-      <section v-if="promptEditorOpen" class="run-composer" aria-labelledby="composer-title">
-        <h1 id="composer-title">Veja o que o agente faz entre o pedido e a resposta</h1>
-        <form class="run-form" id="run-form" @submit.prevent="execute">
-          <label for="prompt">O que o Codex deve fazer?</label>
-          <textarea
-            id="prompt"
-            ref="promptInput"
-            v-model="prompt"
-            name="prompt"
-            rows="4"
-            required
-            :readonly="busy"
+    <ConversationSidebar :threads="sidebarThreads" :current-root="conversation?.root_run_id" :loading="threadsLoading"
+      :error="threadsError" :drawer="drawer" :replay="replay"
+      @new="newConversation" @open="onThreadClick" @retry="loadThreads" @replay="openReplay" @close="closeDrawer()" />
+
+    <header class="compact-navigation" :inert="drawer">
+      <button ref="historyButton" type="button" class="icon-button" aria-label="Abrir histórico" aria-controls="conversation-sidebar"
+        :aria-expanded="drawer" @click="drawer = true">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <strong ref="compactHeading" tabindex="-1">{{ conversation?.title || "Agent Lens" }}</strong>
+      <button type="button" class="icon-button compact-new" aria-label="Nova conversa" @click="newConversation">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </header>
+
+    <main class="conversation-main" :class="{ 'home-main': view !== 'thread' }" :inert="drawer || (hasPane && !wideSidebar)">
+      <section v-if="view === 'home'" class="home-composer" aria-labelledby="composer-title">
+        <p v-if="navigationError" class="composer-status" role="alert">
+          {{ navigationError }} <button type="button" class="link-button" @click="restoreLocation()">Tentar novamente</button>
+        </p>
+        <form id="run-form" class="run-form" @submit.prevent="sendPrompt(prompt)">
+          <p class="view-caption">Nova conversa</p>
+          <h1 id="composer-title"><label for="prompt">O que o Codex deve fazer?</label></h1>
+          <textarea id="prompt" ref="promptInput" v-model="prompt" name="prompt" rows="5" required :readonly="busy"
             placeholder="Leia o README e identifique como iniciar o serviço."
             @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
-            @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"
-          ></textarea>
+            @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
           <div class="workspace-summary">
-            <p><span>Workspace</span><strong>Workspace de exemplo</strong></p>
-            <div class="workspace-permissions">
-              <span class="quiet-label">Leitura permitida</span>
-              <span class="quiet-label">Escrita bloqueada</span>
-            </div>
+            <p><span>Workspace</span><strong>API de catálogo</strong></p>
+            <span class="quiet-label">Leitura e escrita permitidas</span>
           </div>
           <div class="run-actions">
-            <button id="execute" type="submit" :disabled="busy" aria-keyshortcuts="Control+Enter Meta+Enter">Executar</button>
+            <button id="execute" type="submit" :disabled="busy || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
+              {{ busy ? "Enviando…" : "Executar" }}
+            </button>
             <kbd>Ctrl/⌘ + Enter</kbd>
           </div>
+          <p v-if="composerError" class="composer-status" role="alert">Falha ao iniciar a execução. {{ composerError }}</p>
         </form>
         <div class="replay-banner">
           <p><strong>Ver um replay de exemplo</strong><span>Eventos gravados e sanitizados. Sem chamada de modelo.</span></p>
-          <button id="replay" class="secondary" type="button" :disabled="busy" @click="replay">Ver replay de exemplo</button>
+          <button id="replay" class="secondary" type="button" @click="openReplay">Abrir replay</button>
         </div>
-        <section v-if="recentRunIds.length" class="recent-runs" aria-labelledby="recent-title">
-          <h2 id="recent-title">Execuções recentes nesta aba</h2>
-          <ul>
-            <li v-for="runId in recentRunIds" :key="runId">
-              <button type="button" class="link-button" :disabled="busy" @click="reopen(runId)">{{ runId }}</button>
-            </li>
-          </ul>
-        </section>
       </section>
-      <header v-else ref="runHeader" class="run-summary" tabindex="-1">
-        <div class="run-heading">
-          <div class="run-identity">
-            <p class="run-kicker">Codex CLI <template v-if="activeRunId"> · <code class="run-id">{{ activeRunId }}</code></template></p>
-            <h1>Execução do agente</h1>
-          </div>
-          <div class="run-statuses" aria-label="Estados da execução">
-            <span id="run-status" class="state-label" :class="{ 'state-failed': resultFailure }">
-              <span aria-hidden="true">{{ resultFailure ? "×" : captureEnded ? "✓" : "●" }}</span>{{ runStatus }}
-            </span>
-            <span id="connection-status" class="state-label connection-state" :class="{ 'is-reconnecting': connectionStatus === 'Reconectando' }">
-              {{ connectionLabel }}
-            </span>
-            <button v-if="failureCount" type="button" class="state-label state-failed" @click="jumpToFirstFailure">
-              <span aria-hidden="true">×</span>{{ failureCount }} {{ failureCount === 1 ? "falha" : "falhas" }}
+      <p v-else-if="view === 'loading'" class="pane-notice" role="status">Carregando conversa…</p>
+
+      <template v-else-if="view === 'thread'">
+        <header class="conversation-heading">
+          <h1 ref="conversationHeading" tabindex="-1">{{ conversation.title }}</h1>
+          <div v-if="activeTurn || failedTurns.length" class="conversation-shortcuts">
+            <button v-if="activeTurn" type="button" class="secondary compact-button active-shortcut"
+              :aria-current="inspectedRunId === activeTurn.run_id ? 'true' : undefined" @click="inspectActive">
+              <span class="turn-state-dot" aria-hidden="true"></span> Turno {{ activeNumber }} em andamento
             </button>
-            <span v-if="unconfirmedCount" class="state-label">{{ unconfirmedCount }} {{ unconfirmedCount === 1 ? "não confirmada" : "não confirmadas" }}</span>
-          </div>
-        </div>
-        <div v-if="connectionStatus === 'Reconectando' || connectionStatus === 'Interrompida'" class="connection-notice">
-          <div role="status" aria-live="off">
-            <p v-if="connectionStatus === 'Reconectando'">
-              Conexão perdida.
-              <template v-if="lastUpdateSeconds != null">Última atualização há {{ lastUpdateSeconds }} s.</template>
-              Tentando novamente. O estado dos comandos em andamento pode estar desatualizado.
-            </p>
-            <p v-else>Fluxo interrompido. Os eventos exibidos permanecem disponíveis.</p>
-          </div>
-          <button v-if="activeRunId" class="secondary" type="button" @click="retryConnection">Tentar agora</button>
-        </div>
-        <p v-else-if="recovered != null" class="connection-notice">
-          Reconectado · {{ recovered }} {{ recovered === 1 ? "evento recebido" : "eventos recebidos" }}
-        </p>
-        <div v-if="replayMode" class="replay-banner">
-          <p>Replay de eventos gravados. Nenhum modelo está sendo chamado.</p>
-          <div class="replay-actions">
-            <button id="replay" class="secondary" type="button" aria-label="Reiniciar replay" @click="replay">Reiniciar</button>
-            <button v-if="rows.length" class="secondary" type="button" :disabled="following" @click="followLatest()">
-              {{ busy ? following ? "Seguindo até o fim" : "Acompanhar até o fim" : "Pular para o fim" }}
+            <button v-if="failedTurns.length === 1" type="button" class="secondary compact-button failure-shortcut"
+              @click="inspectFailure(failedTurns[0].runId)">
+              {{ failedTurns[0].count }} {{ failedTurns[0].count === 1 ? "falha" : "falhas" }} · turno {{ failedTurns[0].number }}
             </button>
-          </div>
-        </div>
-        <p v-if="failureReason" class="run-failure">{{ failureReason }}</p>
-        <details v-if="submittedPrompt" class="prompt-summary">
-          <summary>
-            <strong>Prompt</strong>
-            <span class="prompt-preview">{{ submittedPrompt }}</span>
-            <span class="prompt-toggle" aria-hidden="true"><span>Expandir ▾</span><span>Recolher ▴</span></span>
-          </summary>
-          <p>{{ submittedPrompt }}</p>
-        </details>
-        <div class="run-stats">
-          <p v-if="reportedTotal"><strong>{{ reportedTotal.value }}</strong> {{ reportedTotal.label }}</p>
-          <p v-if="totalDuration"><strong>{{ totalDuration }}</strong> duração · {{ durationLabel }}</p>
-          <p>
-            <strong>{{ actions.length }}</strong> {{ actions.length === 1 ? "ação" : "ações" }}
-            <template v-if="historyBefore != null"> {{ actions.length === 1 ? "carregada" : "carregadas" }}</template>
-            <span v-if="busy && !captureEnded && activeAction" class="run-active-action"> · Em andamento <strong>{{ actionTitle(activeAction) }}</strong></span>
-          </p>
-          <p><strong>{{ failureCount }}</strong> {{ failureCount === 1 ? "falha" : "falhas" }}</p>
-        </div>
-        <details class="mobile-metrics">
-          <summary>{{ mobileMetrics }}</summary>
-          <dl>
-            <div v-if="totalDuration"><dt>Duração · {{ durationLabel }}</dt><dd>{{ totalDuration }}</dd></div>
-            <div><dt>Ações carregadas</dt><dd>{{ actions.length }}</dd></div>
-            <div><dt>Falhas carregadas</dt><dd>{{ failureCount }}</dd></div>
-            <div v-for="token in tokens" :key="token.field">
-              <dt>Tokens de {{ token.label.toLowerCase() }}</dt><dd>{{ token.value }}</dd>
-            </div>
-          </dl>
-          <p v-if="historyBefore != null">Contagens referentes aos eventos carregados.</p>
-        </details>
-      </header>
-      <p v-if="promptEditorOpen && (busy || resultFailure || runStatus === 'Execução salva não encontrada')" id="run-status" class="composer-status">
-        {{ runStatus }}<template v-if="failureReason">. {{ failureReason }}</template>
-      </p>
-      <ReplyHighlight
-        v-if="!promptEditorOpen && highlightedReply"
-        ref="replyBlock"
-        :key="highlightedReply.key"
-        :entry="highlightedReply"
-        @jump="jumpToReply"
-      />
-      <div v-if="!promptEditorOpen && (rows.length || historyBefore != null)" class="run-layout">
-        <div class="run-sidebar">
-          <aside
-            v-if="desktop"
-            id="action-inspector"
-            ref="inspector"
-            class="command-inspector"
-            aria-label="Inspetor de ações"
-            tabindex="-1"
-            :data-failure="selectedAction?.failed || undefined"
-            :data-command-status="(selectedAction?.command ?? selectedAction?.tool)?.status"
-          >
-            <template v-if="selectedAction">
-              <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" :workspace="workspaceRoot" @announce="announce" />
-              <ActionDetails
-                :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot"
-                :run-id="activeRunId" :final="highlightedReply?.key === selectedAction.key"
-                @announce="announce" @jump="jumpToReplyBlock"
-              />
-            </template>
-            <section v-else class="run-overview">
-              <h2>Resumo da execução</h2>
-              <dl>
-                <div><dt>Falhas</dt><dd>{{ failureCount }}</dd></div>
-                <div><dt>Não confirmadas</dt><dd>{{ unconfirmedCount }}</dd></div>
-              </dl>
-              <template v-if="tokens.length">
-                <h3>Tokens reportados pelo Codex</h3>
-                <dl>
-                  <div v-for="token in tokens" :key="token.field">
-                    <dt>{{ token.label }}</dt><dd>{{ token.value }}</dd>
-                  </div>
-                </dl>
-              </template>
-            </section>
-          </aside>
-          <details v-if="desktop && actions.length >= 8" class="action-index" open>
-            <summary>Índice de ações <span>{{ actions.length }}{{ historyBefore != null ? " carregadas" : "" }}</span></summary>
-            <nav aria-label="Índice de ações da trajetória">
-              <ol>
-                <li v-for="entry in actions" :key="entry.key" :data-failure="entry.failed || undefined" :data-command-status="(entry.command ?? entry.tool).status">
-                  <button
-                    class="index-action"
-                    type="button"
-                    :aria-current="selectedActionKey === entry.key ? 'true' : undefined"
-                    @click="jumpToAction(entry)"
-                  >
-                    <span class="status-symbol" aria-hidden="true">{{ entry.icon }}</span>
-                    <span class="visually-hidden">{{ entry.label }}</span>
-                    <code v-if="entry.command && !entry.title" :title="entry.commandText">{{ entry.commandText || "Comando" }}</code>
-                    <span v-else class="index-title" :title="actionTitle(entry)">{{ actionTitle(entry) }}</span>
+            <details v-else-if="failedTurns.length > 1" class="failure-menu">
+              <summary>Turnos com falhas observadas</summary>
+              <ul>
+                <li v-for="item in failedTurns" :key="item.runId">
+                  <button type="button" class="link-button" @click="inspectFailure(item.runId); $event.currentTarget.closest('details').open = false">
+                    Turno {{ item.number }} · {{ item.count }} {{ item.count === 1 ? "falha" : "falhas" }}
                   </button>
                 </li>
-              </ol>
-            </nav>
-          </details>
-
+              </ul>
+            </details>
+          </div>
+          <div v-if="connection === 'Reconectando' || connection === 'Interrompida'" class="connection-notice">
+            <p role="status">{{ connection === 'Reconectando' ? "Reconectando ao turno ativo…" : "A conexão com a execução foi interrompida." }}</p>
+            <button v-if="activeRunId" type="button" class="secondary" @click="resumeObservation(activeRunId)">Tentar agora</button>
+          </div>
+        </header>
+        <ol ref="turnScroller" class="turn-list" aria-label="Turnos da conversa">
+          <ConversationTurn v-for="(turn, index) in turns" :key="turn.run_id" :turn="presentedTurn(turn)" :number="index + 1"
+            :selected="inspectedRunId === turn.run_id" :live="turn.run_id === activeRunId && connectionLabel === 'Ao vivo'" :observed="turnEvidence(turn)"
+            :workspace="observed.get(turn.run_id)?.workspace || (turn.run_id === activeRunId ? model.data.value.workspace : undefined)"
+            :activity="turn.run_id === activeTurn?.run_id ? liveAction?.title || liveAction?.tool?.name || liveAction?.commandText : undefined"
+            @inspect="inspectTurn" />
+        </ol>
+        <div class="conversation-composer">
+          <form class="continuation-form" :class="{ 'continuation-waiting': !canContinue && !continuationDraft }" @submit.prevent="sendPrompt(continuationDraft, conversation.latest_run_id)">
+            <label for="continuation-prompt">Continuar conversa</label>
+            <textarea v-if="canContinue || continuationDraft" id="continuation-prompt" v-model="continuationDraft" rows="2" required
+              :readonly="!canContinue" :aria-describedby="canContinue ? undefined : 'continuation-note'"
+              placeholder="Envie um novo pedido nesta conversa."
+              @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
+              @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
+            <textarea v-else id="continuation-prompt" class="visually-hidden" disabled aria-describedby="continuation-note"></textarea>
+            <p v-if="!canContinue" id="continuation-note" class="quiet-text">{{ continuationNote }}</p>
+            <button type="submit" :disabled="!canContinue || !continuationDraft.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">Enviar</button>
+          </form>
+          <p v-if="continuationError" role="alert" class="continuation-error">{{ continuationError }}</p>
         </div>
+      </template>
+    </main>
 
-        <section class="events" aria-labelledby="events-title">
-          <div ref="trajectoryBar" class="events-heading">
-            <h2 id="events-title">Trajetória</h2>
-            <div v-if="rows.length" class="trajectory-controls">
-              <div class="event-filters" aria-label="Filtrar eventos" role="group">
-                <button type="button" :aria-pressed="!failedOnly && trajectoryView === 'essential'" @click="filterTrajectory('essential')">Essencial</button>
-                <button type="button" :aria-pressed="!failedOnly && trajectoryView === 'all'" @click="filterTrajectory('all')">Tudo</button>
-                <button type="button" :aria-pressed="failedOnly" @click="filterTrajectory('failures')">
-                  Falhas <span v-if="failureCount" class="failure-count">{{ failureCount }}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-          <nav v-if="rows.length" class="trajectory-shortcuts" aria-label="Atalhos da trajetória">
-            <a href="#timeline" @click.prevent="followLatest(true)">Ir ao último evento</a>
-            <a v-if="selectedAction" href="#action-inspector" @click.prevent="focusInspector">Ir para o detalhe</a>
-          </nav>
-          <div v-if="historyBefore != null" class="history-controls">
-            <button
-              type="button"
-              class="link-button"
-              :aria-disabled="loadingHistory"
-              @click="loadEarlierEvents"
-            >{{ loadingHistory ? "Carregando eventos anteriores…" : "Carregar eventos anteriores" }}</button>
-            <p v-if="historyError">{{ historyError }}</p>
-          </div>
-          <p v-if="selectionPending" class="history-controls">
-            {{ historyBefore != null ? "A ação selecionada ainda não está nos eventos carregados." : "A ação selecionada não está no histórico disponível." }}
-          </p>
-          <p v-if="failedOnly && !visibleRows.length" class="empty-timeline">
-            Nenhuma falha nos eventos carregados.
-          </p>
-          <ol id="timeline" ref="timeline" class="event-list" @focusin="keepFocusedEventVisible">
-            <li
-              v-for="entry in visibleRows"
-              :id="`timeline-${entry.key}`"
-              :key="entry.key"
-              v-memo="[entry, desktop, captureEnded, highlightedReply?.key === entry.key, entry.technicalEvents ? selectedActionKey : selectedActionKey === entry.key]"
-              tabindex="-1"
-              :data-technical-key="entry.technicalEvents?.[0].key"
-              :data-event-type="entry.event?.type"
-              :data-command-id="entry.command?.id"
-              :data-command-status="(entry.command ?? entry.tool)?.status"
-              :class="{ 'trajectory-action': entry.command || entry.tool, 'trajectory-message': entry.markdown || entry.omitted }"
-              :data-failure="entry.failed || undefined"
-            >
-              <ActionRow
-                v-if="entry.command || entry.tool"
-                :entry="entry"
-                :desktop="desktop"
-                :selected="selectedActionKey === entry.key"
-                :terminal="captureEnded"
-                @select="selectAction"
-              />
-              <TechnicalEvents
-                v-else-if="entry.technicalEvents" :events="entry.technicalEvents" :title="entry.groupTitle"
-                :selected-key="selectedActionKey" :desktop="desktop" :terminal="captureEnded" @select="selectAction"
-              />
-              <EventRow
-                v-else :entry="entry" :selected="selectedActionKey === entry.key" :final="highlightedReply?.key === entry.key"
-                @select="selectAction" @jump="jumpToReplyBlock"
-              />
-            </li>
-          </ol>
-          <div v-if="newEvents && !following && !failedOnly" class="new-events">
-            <button type="button" class="secondary" @click="followLatest()">
-              <span aria-hidden="true">↓</span> {{ newEvents === 1 ? "1 novo evento" : `${newEvents} novos eventos` }}
-            </button>
-          </div>
-        </section>
-      </div>
-      <div v-if="!promptEditorOpen" class="continuation-note">
-        <p v-if="replayMode">Continuar a conversa não está disponível em replays.</p>
-        <template v-else-if="busy && !captureEnded">
-          <p>Continuar esta conversa · disponível quando a execução terminar e houver suporte à retomada.</p>
-          <button class="secondary" type="button" disabled>Enviar</button>
-        </template>
-        <p v-else>A retomada desta conversa ainda não está disponível.</p>
-      </div>
+    <div v-if="hasPane" class="trajectory-region" :inert="drawer">
+      <TrajectoryPane v-if="isCurrentPane" v-bind="paneProps" :model="model" :status="replay ? (busy ? 'Em andamento' : connection === 'Interrompida' ? 'Incompleto' : 'Concluído') : paneProps.status"
+        :active="replay ? busy : paneProps.active" :connection="connectionLabel"
+        :last-update-seconds="lastUpdateSeconds" :recovered="recovered" :loading="liveLoading"
+        :detail="outcome?.detail || (liveTurn?.status === 'failed' ? model.data.value.issue : undefined)"
+        :replay="replay" :closeable="!replay"
+        @close="closeInspection" @active-turn="inspectActive" @call="changeActionCall" @retry="resumeObservation(activeRunId)"
+        @scroll="rememberScroll" @announce="announce" @replay="openReplay" />
+      <HistoricalTrajectory v-else v-bind="paneProps" @observed="rememberEvidence" @active-turn="inspectActive"
+        @close="closeInspection" @call="changeActionCall" @scroll="rememberScroll" @announce="announce"
+        @retry="resumeObservation(activeRunId)" />
     </div>
-
-    <section
-      v-if="detailOpen && selectedAction"
-      id="action-inspector"
-      class="narrow-command-detail"
-      aria-labelledby="command-detail-title"
-      @keydown.esc.prevent="closeMobileDetail"
-    >
-      <button
-        ref="backToTimelineButton"
-        type="button"
-        class="link-button detail-back"
-        @click="closeMobileDetail"
-      >
-        <span aria-hidden="true">←</span> Trajetória
-      </button>
-      <div class="narrow-command-card" :data-command-status="(selectedAction.command ?? selectedAction.tool)?.status" :data-failure="selectedAction.failed || undefined">
-        <InspectorHeading :key="selectedAction.key" :entry="selectedAction" :label="selectedLabel" :workspace="workspaceRoot" mobile @announce="announce" />
-        <ActionDetails
-          :key="selectedAction.key" :entry="selectedAction" :terminal="captureEnded" :workspace="workspaceRoot"
-          :run-id="activeRunId" :final="highlightedReply?.key === selectedAction.key"
-          @announce="announce" @jump="jumpToReplyBlock"
-        />
-      </div>
-    </section>
-  </main>
+  </div>
 </template>

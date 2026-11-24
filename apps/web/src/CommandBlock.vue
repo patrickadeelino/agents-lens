@@ -6,6 +6,7 @@ import { formatShellCommand, shellCommandParts } from "./shellCommand.js";
 const props = defineProps({
   raw: { type: String, required: true },
   workspace: String,
+  previewOnly: Boolean,
 });
 const emit = defineEmits(["announce"]);
 const commandId = useId();
@@ -31,6 +32,8 @@ async function copyCommand() {
   emit("announce", "Comando copiado");
 }
 
+defineExpose({ copyCommand });
+
 onUnmounted(() => {
   disposed = true;
   clearTimeout(copyTimer);
@@ -39,10 +42,10 @@ onUnmounted(() => {
 
 <template>
   <div class="command-block">
-    <div class="command-surface">
+    <div class="command-surface" :class="{ 'command-surface-preview': previewOnly }">
       <pre :id="commandId" class="inspector-code command-code" tabindex="0" aria-label="Comando"><code><span class="shell-prompt" aria-hidden="true">$ </span><template v-for="(part, index) in parts" :key="index"><span v-if="part.token" class="shell-token" :class="part.kind">{{ part.text }}</span><template v-else>{{ part.text }}</template></template></code></pre>
       <button
-        type="button" class="command-copy" aria-label="Copiar comando"
+        v-if="!previewOnly" type="button" class="command-copy" aria-label="Copiar comando"
         :title="copied ? 'Copiado' : 'Copiar comando'" @click="copyCommand"
       >
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -54,7 +57,7 @@ onUnmounted(() => {
         </svg>
       </button>
     </div>
-    <button type="button" class="link-button command-original" :aria-controls="commandId" :aria-expanded="showOriginal" @click="showOriginal = !showOriginal">
+    <button v-if="!previewOnly" type="button" class="link-button command-original" :aria-controls="commandId" :aria-expanded="showOriginal" @click="showOriginal = !showOriginal">
       <span aria-hidden="true">{{ showOriginal ? "▾" : "▸" }}</span>
       {{ showOriginal ? "Ver formatado" : "Ver original" }}
     </button>

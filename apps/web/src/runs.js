@@ -39,8 +39,16 @@ async function* readFrames(body) {
   }
 }
 
-export async function streamPrompt(prompt, { signal, onAccepted, onRecord }) {
-  const response = await fetch("/runs", {
+export function streamPrompt(prompt, callbacks) {
+  return streamNewRun("/runs", prompt, callbacks);
+}
+
+export function streamContinuation(runId, prompt, callbacks) {
+  return streamNewRun(`/runs/${encodeURIComponent(runId)}/continue`, prompt, callbacks);
+}
+
+async function streamNewRun(url, prompt, { signal, onAccepted, onRecord }) {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify({ prompt }),
@@ -51,9 +59,10 @@ export async function streamPrompt(prompt, { signal, onAccepted, onRecord }) {
     const payload = await response.json().catch(() => null);
     throw new RunHttpError(response.status, typeof payload?.detail === "string" ? payload.detail : null);
   }
-  if (!response.body) throw new RunHttpError(response.status);
+  const runId = response.headers.get("X-Run-ID");
+  if (!response.body || !runId) throw new RunHttpError(response.status);
 
-  onAccepted(response.headers.get("X-Run-ID"));
+  onAccepted(runId);
   for await (const frame of readFrames(response.body)) {
     if (frame.name === "record") onRecord(frame.data);
     if (frame.name === "end") return frame.data;
