@@ -21,7 +21,6 @@ COPY apps/api-lens/src/api/ ./src/api/
 COPY apps/api-lens/src/application/ ./src/application/
 COPY apps/api-lens/src/domain/ ./src/domain/
 COPY apps/api-lens/src/infrastructure/ ./src/infrastructure/
-COPY apps/web/index.html /app/apps/web/index.html
 COPY examples/traces/readme-run.timed.sanitized.jsonl /app/examples/traces/readme-run.timed.sanitized.jsonl
 
 RUN install -d -m 0700 -o 10001 -g 10001 /app/.captures

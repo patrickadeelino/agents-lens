@@ -15,5 +15,4 @@
 !apps/api-lens/src/domain/trace_*.py
 !apps/api-lens/pyproject.toml
 !apps/api-lens/uv.lock
-!apps/web/index.html
 !examples/traces/readme-run.timed.sanitized.jsonl

@@ -5,6 +5,8 @@ __pycache__/
 .coverage
 /.venv/
 /apps/api-lens/.venv/
+/apps/web/node_modules/
+/apps/web/dist/
 /.vscode/
 /.captures/
 /.local/codex-executor/
