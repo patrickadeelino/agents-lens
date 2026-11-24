@@ -10,6 +10,13 @@ from src.domain.command_execution import CommandExecutions, CommandExecutionStat
 from src.domain.trace_events import TimedEvent
 from src.domain.trace_reader import read_timed_trace
 
+from .run_continuation import (
+    ContinuationInfo,
+    RecordedResult,
+    SavedConversationRun,
+    describe_continuation,
+)
+
 type RunStatus = Literal["completed", "failed", "unconfirmed"]
 type RunReadErrorKind = Literal["run_not_found", "trace_not_found", "capture_starting", "capture_unavailable"]
 
@@ -20,17 +27,10 @@ class RunReadError(Exception):
         self.kind = kind
 
 
-class RecordedResult(Protocol):
-    exit_code: int | None
-
-
-class RunHistorySource(Protocol):
+class RunHistorySource(SavedConversationRun, Protocol):
     def read_result(self) -> RecordedResult | None: ...
 
     def read_trace_lines(self, *, finished: bool) -> Generator[str]: ...
-
-    def is_active(self) -> bool: ...
-
 
 @dataclass(frozen=True)
 class HistoryEvent:
@@ -60,6 +60,7 @@ class RunHistoryPage:
     status: RunStatus
     exit_code: int | None
     last_turn: str | None
+    continuation: ContinuationInfo
 
 
 class GetRunHistory:
@@ -82,6 +83,8 @@ class GetRunHistory:
             with closing(capture.read_trace_lines(finished=result is not None)) as lines:
                 return self._build_page(
                     run_id, lines, limit=limit, before=before, exit_code=result.exit_code if result else None,
+                    continuation=describe_continuation(run_id, capture, result),
+                    capture_failed=getattr(result, "capture_failed", False),
                 )
         except FileNotFoundError as error:
             kind: RunReadErrorKind = "capture_starting" if capture.is_active() else "trace_not_found"
@@ -93,6 +96,8 @@ class GetRunHistory:
     @classmethod
     def _build_page(
         cls, run_id: str, lines: Iterable[str], *, limit: int, before: int | None, exit_code: int | None,
+        continuation: ContinuationInfo,
+        capture_failed: bool = False,
     ) -> RunHistoryPage:
         page: deque[tuple[HistoryEvent, str | None]] = deque(maxlen=limit)
         commands = CommandExecutions(retain_output=False)
@@ -115,13 +120,13 @@ class GetRunHistory:
         next_before = events[0].event_id if events and events[0].event_id > 1 else None
         return RunHistoryPage(
             run_id, events, summaries, latest_event_id, next_before,
-            cls._run_status(last_turn, exit_code), exit_code, last_turn,
+            cls._run_status(last_turn, exit_code, capture_failed), exit_code, last_turn, continuation,
         )
 
 
     @staticmethod
-    def _run_status(last_turn: str | None, exit_code: int | None) -> RunStatus:
-        if last_turn == "turn.failed" or (exit_code is not None and exit_code != 0):
+    def _run_status(last_turn: str | None, exit_code: int | None, capture_failed: bool = False) -> RunStatus:
+        if capture_failed or last_turn == "turn.failed" or (exit_code is not None and exit_code != 0):
             return "failed"
         if last_turn == "turn.completed" and exit_code == 0:
             return "completed"

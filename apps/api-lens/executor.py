@@ -13,9 +13,14 @@ from fastapi.responses import StreamingResponse
 from opentelemetry.trace import Span
 
 from src.api.observability import observed_app
-from src.api.schemas import PromptRequest
 from src.api.sse import ClosingStreamingResponse
-from src.infrastructure.executor_protocol import RunError, RunExit, RunOutput
+from src.infrastructure.executor_protocol import (
+    SESSION_PERSISTENCE_HEADER,
+    ExecutorRequest,
+    RunError,
+    RunExit,
+    RunOutput,
+)
 from src.infrastructure.read_only_run import ReadOnlyRun
 from src.observability import (
     EventProgress,
@@ -33,7 +38,7 @@ app = observed_app(
 execution_lock = asyncio.Lock()
 
 
-async def stream_process(run: ReadOnlyRun, prompt: str) -> AsyncGenerator[str]:
+async def stream_process(run: ReadOnlyRun, request: ExecutorRequest) -> AsyncGenerator[str]:
     if execution_lock.locked():
         event_log("executor.rejected", "executor", "rejected", error_code="executor_busy")
         yield RunExit(exit_code=None).model_dump_json() + "\n"
@@ -42,7 +47,7 @@ async def stream_process(run: ReadOnlyRun, prompt: str) -> AsyncGenerator[str]:
     async with execution_lock:
         with operation_span("codex.subprocess") as span:
             first_event_sent = False
-            async with aclosing(subprocess_messages(run, prompt, span)) as messages:
+            async with aclosing(subprocess_messages(run, request, span)) as messages:
                 async for message in messages:
                     yield message.model_dump_json() + "\n"
                     # The iterator resumes after ASGI accepts the response body.
@@ -82,12 +87,12 @@ async def stop_process(process: asyncio.subprocess.Process, stdout: asyncio.Stre
 
 
 async def subprocess_messages(
-    run: ReadOnlyRun, prompt: str, span: Span,
+    run: ReadOnlyRun, request: ExecutorRequest, span: Span,
 ) -> AsyncGenerator[RunOutput | RunExit | RunError]:
     progress = EventProgress("executor.subprocess.first_event_read", "subprocess")
     try:
         process = await asyncio.create_subprocess_exec(
-            *run.command(),
+            *run.command(request.thread_id),
             cwd=run.workspace,
             env=run.environment(),
             stdin=asyncio.subprocess.PIPE,
@@ -106,7 +111,7 @@ async def subprocess_messages(
 
     assert process.stdout is not None and process.stdin is not None
     event_log("executor.subprocess.started", "subprocess", "started")
-    delivery = asyncio.create_task(send_prompt(process.stdin, prompt))
+    delivery = asyncio.create_task(send_prompt(process.stdin, request.prompt))
     try:
         async for line in stdout_lines(process.stdout):
             progress.advance(span)
@@ -137,14 +142,15 @@ async def subprocess_messages(
 
 
 @app.post("/run", response_class=StreamingResponse)
-async def prompt_run(request: PromptRequest) -> StreamingResponse:
+async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
     run = getattr(app.state, "read_only_run", None)
     if not isinstance(run, ReadOnlyRun):
         event_log("executor.rejected", "executor", "rejected", error_code="executor_unconfigured")
         raise HTTPException(status_code=503, detail="Read-only executor is not configured.")
     return ClosingStreamingResponse(
-        stream_process(run, request.prompt),
+        stream_process(run, request),
         media_type="application/x-ndjson",
+        headers={SESSION_PERSISTENCE_HEADER: "enabled"},
     )
 
 

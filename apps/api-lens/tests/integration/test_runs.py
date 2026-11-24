@@ -3,12 +3,15 @@ import socket
 import sys
 from asyncio import Queue
 from collections.abc import Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from datetime import UTC
 from itertools import pairwise
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from time import monotonic, sleep
+from uuid import UUID
 
 import httpx
 import pytest
@@ -26,6 +29,7 @@ from executor import app as executor_app
 from src.api import dependencies
 from src.application import capture_run
 from src.application.capture_run import FlushedRecord
+from src.application.run_continuation import RunSession
 from src.domain.trace_events import TimedEvent
 from src.infrastructure.capture_files import CaptureFiles
 from src.infrastructure.read_only_run import ReadOnlyRun
@@ -38,11 +42,41 @@ import sys
 import time
 from pathlib import Path
 
-assert sys.argv[-2:] == ["--", "-"]
+thread_id = "c47f8d99-9af1-4219-bc65-a55a27096cb8"
+resuming = sys.argv[1:3] == ["exec", "resume"]
+assert sys.argv[-3:] == ["--", thread_id, "-"] if resuming else sys.argv[-2:] == ["--", "-"]
+assert "--ephemeral" not in sys.argv
+assert "--json" in sys.argv
 assert 'default_permissions="agent-lens-readme"' in sys.argv
+filesystem = next(arg for arg in sys.argv if arg.startswith('permissions.agent-lens-readme.filesystem='))
+assert json.dumps(str(Path.cwd())) + ' = "read"' in filesystem
 assert 'permissions.agent-lens-readme.network.enabled=false' in sys.argv
 assert 'shell_environment_policy.inherit="none"' in sys.argv
 prompt = sys.stdin.buffer.read().decode("utf-8")
+state = Path(os.environ["CODEX_HOME"])
+marker_file = state / "session-marker"
+if prompt == "independent conversation":
+    print(json.dumps({"type": "thread.started", "thread_id": "55555555-5555-4555-8555-555555555555"}), flush=True)
+    print('{"type":"turn.completed"}', flush=True)
+    raise SystemExit(0)
+if prompt == "save marker: niobium":
+    assert not resuming
+    marker_file.write_text("niobium")
+if prompt in ("recall the marker", "reject the continuation"):
+    assert resuming
+    with (state / "resume-attempts").open("a") as attempts:
+        print(prompt, file=attempts)
+    if prompt == "reject the continuation":
+        raise SystemExit(7)
+if prompt in ("save marker: niobium", "recall the marker"):
+    print(json.dumps({"type": "thread.started", "thread_id": thread_id}), flush=True)
+    print('{"type":"turn.started"}', flush=True)
+    if resuming:
+        print(json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": marker_file.read_text(),
+        }}), flush=True)
+    print('{"type":"turn.completed"}', flush=True)
+    raise SystemExit(0)
 if prompt == "report command outcome":
     time.sleep(1)
 print(json.dumps({"type": "turn.started", "prompt": prompt, "cwd": str(Path.cwd())}), flush=True)
@@ -220,6 +254,7 @@ def test_run_stream_bridges_history_and_live_capture(
     history = backend.get(run_url + "/events")
     assert history.status_code == 200
     assert history.json()["latest_event_id"] == 33
+    assert backend.post(run_url + "/continue", json={"prompt": "continue now"}).status_code == 409
     (run_workspace / "emit-34").touch()
 
     trace = directory / "events.timed.jsonl"
@@ -247,9 +282,121 @@ def test_run_stream_bridges_history_and_live_capture(
         assert next_frame(frames) == ("end", {"exit_code": 0})
         assert list(frames) == []
 
-    assert json.loads((directory / "result.json").read_text(encoding="utf-8")) == {"exit_code": 0}
+    assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] == 0
     assert len(trace.read_text(encoding="utf-8").splitlines()) == 35
     assert capture_directory(run_workspace) == directory
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_latest_run_resumes_the_thread_once_and_links_survive_api_restart(run_workspace: Path) -> None:
+    thread_id = "c47f8d99-9af1-4219-bc65-a55a27096cb8"
+    with running_server(app, Event()) as url, httpx.Client(base_url=url, timeout=6, trust_env=False) as backend:
+        first = backend.post("/runs", json={"prompt": "save marker: niobium"})
+        first_id = first.headers["X-Run-ID"]
+        original = f"/runs/{first_id}"
+        assert thread_id in first.text
+        assert backend.get(original + "/events").json()["continuation"]["state"] == "available"
+        assert backend.post(original + "/continue", json={"prompt": "hello", "thread_id": thread_id}).status_code == 422
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            sends = [pool.submit(backend.post, original + "/continue", json={"prompt": "recall the marker"})
+                     for _ in range(2)]
+            accepted, rejected = sorted((send.result() for send in sends), key=lambda response: response.status_code)
+
+        assert (accepted.status_code, rejected.status_code) == (200, 409)
+        assert "X-Run-ID" not in rejected.headers
+        second_id = accepted.headers["X-Run-ID"]
+        assert second_id != first_id
+        assert thread_id in accepted.text
+        assert "niobium" in accepted.text
+        assert (run_workspace / "resume-attempts").read_text().splitlines() == ["recall the marker"]
+        assert len(list((run_workspace / "captures").iterdir())) == 2
+        first_session = CaptureFiles.find(run_workspace / "captures", first_id).read_session()
+        second_session = CaptureFiles.find(run_workspace / "captures", second_id).read_session()
+        assert first_session is not None and second_session is not None
+        assert first_session.prompt == "save marker: niobium"
+        assert second_session.prompt == "recall the marker"
+        assert first_session.submitted_at is not None and second_session.submitted_at is not None
+        assert first_session.submitted_at.tzinfo == UTC
+        assert second_session.submitted_at.tzinfo == UTC
+        listing = backend.get("/threads")
+        assert listing.status_code == 200
+        assert listing.headers["cache-control"] == "no-store"
+        assert len(listing.json()["threads"]) == 1
+        summary = listing.json()["threads"][0]
+        assert summary["thread_id"] == thread_id
+        assert summary["root_run_id"] == first_id
+        assert summary["latest_run_id"] == second_id
+        detail = backend.get(f"/threads/by-run/{second_id}").json()
+        assert [turn["prompt"] for turn in detail["turns"]] == ["save marker: niobium", "recall the marker"]
+        assert detail["turns"][1]["assistant_markdown"] == "niobium"
+        assert [turn["summary"]["actions"] for turn in detail["turns"]] == [0, 0]
+        assert all(turn["summary"]["failures"] == 0 for turn in detail["turns"])
+        assert backend.get(f"/threads/{thread_id}").json() == detail
+        independent = backend.post("/runs", json={"prompt": "independent conversation"})
+        independent_id = independent.headers["X-Run-ID"]
+        listing = backend.get("/threads").json()["threads"]
+        assert [row["root_run_id"] for row in listing] == [independent_id, first_id]
+
+    with running_server(app, Event()) as url, httpx.Client(base_url=url, timeout=6, trust_env=False) as backend:
+        restored = backend.get("/threads").json()["threads"]
+        assert len(restored) == 2
+        assert restored[1]["root_run_id"] == first_id
+        assert restored[1]["latest_run_id"] == second_id
+        assert backend.get(f"/threads/{thread_id}").json()["turns"] == detail["turns"]
+        old = backend.get(f"/runs/{first_id}/events").json()
+        new = backend.get(f"/runs/{second_id}/events").json()
+        assert old["continuation"]["state"] == "superseded"
+        assert old["continuation"]["latest_run_id"] == second_id
+        assert new["continuation"]["previous_run_id"] == first_id
+        assert new["continuation"]["state"] == "available"
+        for page in (old, new):
+            assert page["events"][0]["record"]["event"]["thread_id"] == thread_id
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+) -> None:
+    backend, _ = live_http
+    legacy = CaptureFiles.create(run_workspace / "captures", prefix="codex-prompt-")
+    legacy.ensure_trace()
+    legacy.write_result(0)
+    assert backend.get(f"/runs/{legacy.directory.name}/events").json()["continuation"]["state"] == "ephemeral"
+    assert backend.post(f"/runs/{legacy.directory.name}/continue", json={"prompt": "hello"}).status_code == 409
+    assert backend.post("/runs/missing/continue", json={"prompt": "hello"}).status_code == 404
+
+    first = backend.post("/runs", json={"prompt": "save marker: niobium"})
+    first_id = first.headers["X-Run-ID"]
+    failed = backend.post(f"/runs/{first_id}/continue", json={"prompt": "reject the continuation"})
+    assert failed.status_code == 200
+    failed_id = failed.headers["X-Run-ID"]
+    response = backend.get(f"/runs/{failed_id}/events")
+    assert response.status_code == 200
+    page = response.json()
+    assert page["events"] == []
+    assert page["status"] == "failed"
+    assert page["continuation"]["state"] == "unavailable"
+    assert page["continuation"]["previous_run_id"] == first_id
+    assert backend.post(f"/runs/{failed_id}/continue", json={"prompt": "again"}).status_code == 409
+
+
+def test_a_thread_id_from_an_older_executor_does_not_make_a_saved_run_resumable(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+) -> None:
+    backend, _ = live_http
+    capture = CaptureFiles.create(run_workspace / "captures", prefix="codex-prompt-")
+    thread_id = UUID("c47f8d99-9af1-4219-bc65-a55a27096cb8")
+    capture.write_session(RunSession(persistent=True))
+    with capture.open_trace() as trace:
+        trace.write('{"elapsed_ns":0,"event":{"type":"turn.completed"}}\n')
+    capture.write_result(0, thread_id=thread_id)
+
+    url = f"/runs/{capture.directory.name}"
+    history = backend.get(url + "/events").json()
+    assert history["status"] == "completed"
+    assert history["continuation"]["state"] == "unavailable"
+    assert backend.post(url + "/continue", json={"prompt": "try again"}).status_code == 409
 
 
 @pytest.mark.parametrize("body", [{}, {"prompt": 42}, {"prompt": "  \n "}, {"prompt": "read", "workspace": "/"}])
@@ -315,7 +462,7 @@ def test_run_streams_saved_records_before_exit_and_rejects_a_concurrent_run(
         assert list(frames) == []
 
     assert [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()] == [first, second]
-    assert json.loads((directory / "result.json").read_text(encoding="utf-8")) == {"exit_code": 0}
+    assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] == 0
 
 
 @pytest.mark.usefixtures("executor_socket")
@@ -346,7 +493,7 @@ def test_run_preserves_records_and_reports_nonzero_exit(
 
     directory = capture_directory(run_workspace)
     assert json.loads((directory / "events.timed.jsonl").read_text(encoding="utf-8")) == record
-    assert json.loads((directory / "result.json").read_text(encoding="utf-8")) == {"exit_code": 7}
+    assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] == 7
 
 
 @pytest.mark.usefixtures("executor_socket")
@@ -384,7 +531,7 @@ def test_run_finishes_capture_after_the_client_disconnects(
             pytest.fail("The capture did not finish after disconnect")
         sleep(0.01)
 
-    assert json.loads(result.read_text(encoding="utf-8")) == {"exit_code": 0}
+    assert json.loads(result.read_text(encoding="utf-8"))["exit_code"] == 0
     trace = directory / "events.timed.jsonl"
     records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
     assert records[0] == first
@@ -475,7 +622,7 @@ def test_run_keeps_observed_records_and_rejects_invalid_executor_streams(
 
     directory = capture_directory(run_workspace)
     assert json.loads((directory / "events.timed.jsonl").read_text(encoding="utf-8")) == record
-    assert not (directory / "result.json").exists()
+    assert json.loads((directory / "result.json").read_text())["exit_code"] is None
 
 
 def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
@@ -492,8 +639,12 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
         assert list(frames) == []
 
     directory = capture_directory(run_workspace)
-    assert not (directory / "events.timed.jsonl").exists()
-    assert not (directory / "result.json").exists()
+    assert (directory / "events.timed.jsonl").read_text() == ""
+    assert json.loads((directory / "result.json").read_text())["exit_code"] is None
+    detail = backend.get(f"/threads/by-run/{directory.name}")
+    assert detail.status_code == 200
+    assert detail.json()["thread_id"] is None
+    assert detail.json()["turns"][0]["status"] == "failed"
 
 
     stderr = capsys.readouterr().err
@@ -559,7 +710,7 @@ def test_run_streams_large_event_intact(
     directory = capture_directory(run_workspace)
     trace = (directory / "events.timed.jsonl").read_text(encoding="utf-8")
     assert [json.loads(line) for line in trace.splitlines()] == records
-    assert json.loads((directory / "result.json").read_text(encoding="utf-8")) == {"exit_code": 0}
+    assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] == 0
 
     _, log_exporter = telemetry_exports
     stderr = capsys.readouterr().err
@@ -660,7 +811,10 @@ def test_run_traces_result_write_failure_without_raw_exception(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
     telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
 ) -> None:
-    def fail_write(self: CaptureFiles, exit_code: int | None) -> None:
+    def fail_write(
+        self: CaptureFiles, exit_code: int | None, *, thread_id: UUID | None = None, persistence_confirmed: bool = False,
+        **kwargs: object,
+    ) -> None:
         raise OSError("private-result-path")
 
     monkeypatch.setattr(CaptureFiles, "write_result", fail_write)
@@ -761,7 +915,7 @@ def test_run_preserves_trace_when_a_line_exceeds_the_limit(
     directory = capture_directory(run_workspace)
     trace = (directory / "events.timed.jsonl").read_text(encoding="utf-8")
     assert [json.loads(line) for line in trace.splitlines()] == [record]
-    assert not (directory / "result.json").exists()
+    assert json.loads((directory / "result.json").read_text())["exit_code"] is None
 
 
 def test_replay_logs_disconnect_after_loading_a_valid_trace(

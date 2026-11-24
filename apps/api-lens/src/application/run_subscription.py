@@ -8,7 +8,8 @@ from typing import Literal, Protocol
 
 from src.domain.trace_events import TimedEvent
 
-from .run_history import HistoryEvent, RecordedResult, RunReadError
+from .run_continuation import RecordedResult
+from .run_history import HistoryEvent, RunReadError
 
 
 class RunTail(Protocol):

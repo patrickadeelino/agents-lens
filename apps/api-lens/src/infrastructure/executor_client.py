@@ -1,6 +1,7 @@
 """Read the executor response through its Unix socket."""
 
 from collections.abc import Iterator
+from uuid import UUID
 
 import httpx
 from opentelemetry.trace import Span, SpanKind
@@ -8,6 +9,7 @@ from pydantic import TypeAdapter
 
 from src.application.capture_run import (
     EventTooLarge,
+    ExecutionResult,
     ExecutorRequestFailed,
     StdoutConsumer,
 )
@@ -20,7 +22,13 @@ from src.observability import (
     outgoing_context,
 )
 
-from .executor_protocol import RunError, RunExit, RunOutput
+from .executor_protocol import (
+    SESSION_PERSISTENCE_HEADER,
+    ExecutorRequest,
+    RunError,
+    RunExit,
+    RunOutput,
+)
 
 _EXECUTOR_MESSAGE = TypeAdapter(RunOutput | RunExit | RunError)
 
@@ -29,12 +37,12 @@ class ExecutorClient:
     def __init__(self, socket: str) -> None:
         self._socket = socket
 
-    def run(self, prompt: str, on_stdout: StdoutConsumer) -> int | None:
+    def run(self, prompt: str, on_stdout: StdoutConsumer, *, thread_id: UUID | None = None) -> ExecutionResult:
         """Deliver the stdout lines and return the terminal status."""
         with operation_span("executor.request", kind=SpanKind.CLIENT) as span:
             event_log("executor.request.started", "executor_client", "started")
             try:
-                exit_code = self._request(prompt, on_stdout, span)
+                result = self._request(ExecutorRequest(prompt=prompt, thread_id=thread_id), on_stdout, span)
             except httpx.HTTPError as error:
                 failure_code = executor_http_error_code(span, error)
                 finish_span(span, "failed", error_code=failure_code)
@@ -45,11 +53,11 @@ class ExecutorClient:
             except (OSError, ValueError):
                 finish_span(span, "failed", error_code="capture_stream_invalid")
                 raise
-            outcome, code = exit_outcome(exit_code)
+            outcome, code = exit_outcome(result.exit_code)
             finish_span(span, outcome, error_code=code)
-            return exit_code
+            return result
 
-    def _request(self, prompt: str, on_stdout: StdoutConsumer, span: Span) -> int | None:
+    def _request(self, request: ExecutorRequest, on_stdout: StdoutConsumer, span: Span) -> ExecutionResult:
         progress = EventProgress("executor.request.first_event_received", "executor_client")
         transport = httpx.HTTPTransport(uds=self._socket)
         timeout = httpx.Timeout(120, connect=5.0)
@@ -57,9 +65,12 @@ class ExecutorClient:
             httpx.Client(
                 base_url="http://executor-host", timeout=timeout, trust_env=False, transport=transport,
             ) as client,
-            client.stream("POST", "/run", json={"prompt": prompt}, headers=outgoing_context()) as response,
+            client.stream(
+                "POST", "/run", json=request.model_dump(mode="json", exclude_none=True), headers=outgoing_context(),
+            ) as response,
         ):
-            return _consume_response(response, on_stdout, progress, span)
+            exit_code = _consume_response(response, on_stdout, progress, span)
+            return ExecutionResult(exit_code, response.headers.get(SESSION_PERSISTENCE_HEADER) == "enabled")
 
 
 def executor_http_error_code(span: Span, error: httpx.HTTPError) -> str:

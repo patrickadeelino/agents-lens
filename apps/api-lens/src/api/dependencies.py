@@ -2,21 +2,26 @@
 
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import HTTPException
 from fastapi import Path as PathParam
 
 from src.application.capture import EventCapture
 from src.application.capture_run import CaptureRun
+from src.application.conversations import Conversations
 from src.application.replay import InvalidReplayOffsets, TimedReplay
+from src.application.run_continuation import RunSession, describe_continuation
 from src.application.run_history import GetRunHistory
 from src.application.run_subscription import SubscribeToRun
 from src.domain.trace_reader import read_timed_trace
 from src.infrastructure.capture_files import CaptureFiles
+from src.infrastructure.conversation_store import ConversationStore
 from src.infrastructure.executor_client import ExecutorClient
 from src.observability import bind_run_id, event_log, finish_span, operation_span
 
@@ -65,18 +70,70 @@ class PromptCapture:
 
 
 def get_prompt_capture(request: PromptRequest) -> PromptCapture:
+    socket = executor_socket()
+    output = create_capture(request.prompt)
+    return prepare_capture(request.prompt, socket, output)
+
+
+def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> PromptCapture:
+    origin, thread_id = resumable_capture(run_id)
+    socket = executor_socket()
+    output = create_capture(request.prompt, previous_run_id=run_id)
+    try:
+        origin.reserve_successor(output)
+    except FileExistsError as error:
+        output.discard_unpublished()
+        raise HTTPException(status_code=409, detail="Open the latest run to continue this conversation.") from error
+    except OSError as error:
+        output.discard_unpublished()
+        raise HTTPException(status_code=503, detail="Capture directory is unavailable.") from error
+    return prepare_capture(request.prompt, socket, output, thread_id=thread_id)
+
+
+def resumable_capture(run_id: str) -> tuple[CaptureFiles, UUID]:
+    try:
+        origin = CaptureFiles.find(CAPTURE_ROOT, run_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Run was not found.") from error
+    except OSError as error:
+        raise HTTPException(status_code=503, detail="Run capture is unavailable.") from error
+    try:
+        result = origin.read_result()
+        projection = Conversations(ConversationStore(CAPTURE_ROOT))
+        projection.by_run(run_id)
+        continuation = describe_continuation(run_id, origin, result)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=503, detail="Run capture is unavailable.") from error
+    if continuation.state != "available" or result is None or result.thread_id is None:
+        raise HTTPException(status_code=409, detail=continuation.reason or "This run cannot be continued.")
+    return origin, result.thread_id
+
+
+def executor_socket() -> str:
     socket = os.environ.get("AGENT_LENS_EXECUTOR_SOCKET")
     if not socket:
         event_log("run.rejected", "api", "rejected", error_code="executor_unconfigured")
         raise HTTPException(status_code=503, detail="Host executor socket is not configured.")
+    return socket
 
+
+def create_capture(prompt: str, *, previous_run_id: str | None = None) -> CaptureFiles:
     try:
         output = CaptureFiles.create(CAPTURE_ROOT, prefix="codex-prompt-")
+        output.write_session(RunSession(
+            persistent=True, previous_run_id=previous_run_id, prompt=prompt, submitted_at=datetime.now(UTC),
+        ))
     except OSError as error:
         event_log("run.rejected", "api", "rejected", error_code="capture_unavailable")
         raise HTTPException(status_code=503, detail="Capture directory is unavailable.") from error
+    return output
 
+
+def prepare_capture(
+    prompt: str, socket: str, output: CaptureFiles, *, thread_id: UUID | None = None,
+) -> PromptCapture:
     bind_run_id(output.directory.name)
     event_log("run.accepted", "api", "accepted")
-    capture = CaptureRun(request.prompt, ExecutorClient(socket).run, EventCapture(), output)
+    execute = partial(ExecutorClient(socket).run, thread_id=thread_id)
+    capture = CaptureRun(prompt, execute, EventCapture(), output, expected_thread=thread_id)
     return PromptCapture(output.directory.name, capture)

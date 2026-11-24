@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import UUID
 
 PROFILE = "agent-lens-readme"
 
@@ -16,12 +17,13 @@ class ReadOnlyRun:
     model: str
     api_key: str = field(repr=False)
 
-    def command(self) -> tuple[str, ...]:
+    def command(self, thread_id: UUID | None = None) -> tuple[str, ...]:
         workspace = json.dumps(str(self.workspace))
         binary = json.dumps(str(self.binary))
         filesystem = f'{{":root" = "deny", ":minimal" = "read", {workspace} = "read", {binary} = "read"}}'
         return (
-            str(self.binary), "exec", "--json", "--ephemeral", "--skip-git-repo-check",
+            str(self.binary), "exec", *(("resume",) if thread_id else ()),
+            "--json", "--skip-git-repo-check",
             "--strict-config", "--ignore-user-config", "--model", self.model,
             "-c", f'default_permissions="{PROFILE}"',
             "-c", f"permissions.{PROFILE}.filesystem={filesystem}",
@@ -29,7 +31,7 @@ class ReadOnlyRun:
             "-c", 'shell_environment_policy.inherit="none"',
             "-c", 'shell_environment_policy.set.PATH="/usr/bin:/bin"',
             "-c", 'approval_policy="never"',
-            "--", "-",
+            "--", *((str(thread_id),) if thread_id else ()), "-",
         )
 
     def environment(self) -> dict[str, str]:

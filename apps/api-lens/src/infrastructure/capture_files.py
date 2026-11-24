@@ -1,24 +1,40 @@
 """Persist application captures on the local filesystem."""
 
-import json
+import re
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
+from os import link
 from pathlib import Path
-from tempfile import mkdtemp
+from tempfile import NamedTemporaryFile, mkdtemp
 from threading import Lock
 from typing import BinaryIO, ClassVar, Self, TextIO
+from uuid import UUID
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, ConfigDict
 
+from src.application.run_continuation import RunSession
+from src.domain.turn_summary import TurnSummary
+
 TRACE_NAME = "events.timed.jsonl"
 RESULT_NAME = "result.json"
+SESSION_NAME = "session.json"
+SUCCESSOR_NAME = "next-run"
 
 
 class SavedResult(BaseModel):
     model_config = ConfigDict(strict=True, hide_input_in_errors=True)
     exit_code: int | None
+    thread_id: UUID | None = None
+    persistence_confirmed: bool = False
+    assistant_markdown: str | None = None
+    last_turn: str | None = None
+    finished_at: datetime | None = None
+    conflicting_thread_id: UUID | None = None
+    capture_failed: bool = False
+    summary: TurnSummary | None = None
 
 
 @dataclass(frozen=True)
@@ -56,9 +72,77 @@ class CaptureFiles:
         with self._activity_lock:
             return self.directory in self._active
 
-    def write_result(self, exit_code: int | None) -> None:
-        with (self.directory / RESULT_NAME).open("x", encoding="utf-8") as result:
-            print(json.dumps({"exit_code": exit_code}), file=result)
+    def ensure_trace(self) -> None:
+        (self.directory / TRACE_NAME).touch(exist_ok=True)
+
+    def write_result(
+        self, exit_code: int | None, *, thread_id: UUID | None = None, persistence_confirmed: bool = False,
+        assistant_markdown: str | None = None, last_turn: str | None = None, finished_at: datetime | None = None,
+        conflicting_thread_id: UUID | None = None,
+        capture_failed: bool = False, summary: TurnSummary | None = None,
+    ) -> None:
+        result = SavedResult(exit_code=exit_code, thread_id=thread_id, persistence_confirmed=persistence_confirmed,
+                             assistant_markdown=assistant_markdown, last_turn=last_turn, finished_at=finished_at,
+                             conflicting_thread_id=conflicting_thread_id, capture_failed=capture_failed, summary=summary)
+        fields = set()
+        if thread_id is None:
+            fields.add("thread_id")
+        if not persistence_confirmed:
+            fields.add("persistence_confirmed")
+        if not capture_failed:
+            fields.add("capture_failed")
+        fields.update(name for name in ("assistant_markdown", "last_turn", "finished_at", "conflicting_thread_id", "summary")
+                      if getattr(result, name) is None)
+        self._publish_once(RESULT_NAME, result.model_dump_json(exclude=fields) + "\n")
+
+    def write_session(self, session: RunSession) -> None:
+        self._publish_once(SESSION_NAME, session.model_dump_json())
+
+    def read_session(self) -> RunSession | None:
+        try:
+            contents = self._saved_file(SESSION_NAME).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        return RunSession.model_validate_json(contents)
+
+    def reserve_successor(self, successor: Self) -> None:
+        self._publish_once(SUCCESSOR_NAME, successor.directory.name)
+
+    def successor(self) -> Self | None:
+        try:
+            name = self._saved_file(SUCCESSOR_NAME).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        if not re.fullmatch(r"codex-prompt-[A-Za-z0-9_-]+", name):
+            raise ValueError("Invalid continuation link.")
+        try:
+            return self.find(self.directory.parent, name)
+        except FileNotFoundError as error:
+            raise ValueError("Invalid continuation link.") from error
+
+    def discard_unpublished(self) -> None:
+        (self.directory / SESSION_NAME).unlink(missing_ok=True)
+        self.directory.rmdir()
+
+    def latest_run_id(self) -> str:
+        current = self
+        visited: set[Path] = set()
+        while current.directory not in visited:
+            visited.add(current.directory)
+            child = current.successor()
+            if child is None:
+                return current.directory.name
+            session = child.read_session()
+            if session is None or session.previous_run_id != current.directory.name:
+                raise ValueError("Invalid continuation link.")
+            current = child
+        raise ValueError("Continuation links contain a cycle.")
+
+    def _publish_once(self, name: str, contents: str) -> None:
+        with NamedTemporaryFile(dir=self.directory, mode="w", encoding="utf-8", delete_on_close=False) as temporary:
+            temporary.write(contents)
+            temporary.close()
+            link(temporary.name, self.directory / name)
 
     def read_trace_lines(self, *, finished: bool) -> Generator[str]:
         with self.open_saved_trace() as trace:

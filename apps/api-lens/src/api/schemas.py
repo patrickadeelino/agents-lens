@@ -1,4 +1,4 @@
-"""Prompt request body shared by the web API and the host executor."""
+"""Public prompt request body."""
 
 from pydantic import BaseModel, ConfigDict, field_validator
 

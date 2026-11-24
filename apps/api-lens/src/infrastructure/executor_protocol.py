@@ -1,8 +1,24 @@
 """NDJSON response messages exchanged with the host executor."""
 
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
+
+SESSION_PERSISTENCE_HEADER = "X-Agent-Lens-Session-Persistence"
+
+
+class ExecutorRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    prompt: str
+    thread_id: UUID | None = None
+
+    @field_validator("prompt")
+    @classmethod
+    def require_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Prompt must contain text.")
+        return value
 
 
 class RunOutput(BaseModel):

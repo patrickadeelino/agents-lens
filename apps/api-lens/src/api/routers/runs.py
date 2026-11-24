@@ -13,8 +13,12 @@ from opentelemetry.trace import INVALID_SPAN, Span, use_span
 from starlette.requests import ClientDisconnect
 from starlette.types import Send
 
-from src.api.dependencies import PromptCapture, get_prompt_capture
-from src.api.sse import ClosingStreamingResponse, end_frame, record_frame
+from src.api.dependencies import (
+    PromptCapture,
+    get_continuation_capture,
+    get_prompt_capture,
+)
+from src.api.sse import end_frame, record_frame
 from src.application.capture_run import CaptureResult, CaptureRun, FlushedRecord
 from src.observability import (
     EventProgress,
@@ -60,26 +64,28 @@ class RunSseDelivery:
         finish_span(self.span, outcome, error_code=error_code)
 
 
-async def run_frames(capture: CaptureRun, delivery: RunSseDelivery) -> AsyncGenerator[str]:
-    async with aclosing(capture.stream()) as messages:
-        async for message in messages:
-            if isinstance(message, FlushedRecord):
-                yield record_frame(message.record)
-                # The response iterator resumes after ASGI send returns.
-                delivery.record_sent(message)
-            else:
-                payload: dict[str, int | str | None] = {"exit_code": message.exit_code}
-                if message.exit_code is None:
-                    payload["error"] = message.error or "execution_failed"
-                yield end_frame(payload)
-                delivery.end_sent(message)
+async def run_frames(
+    messages: AsyncGenerator[FlushedRecord | CaptureResult], delivery: RunSseDelivery,
+) -> AsyncGenerator[str]:
+    async for message in messages:
+        if isinstance(message, FlushedRecord):
+            yield record_frame(message.record)
+            # The response iterator resumes after ASGI send returns.
+            delivery.record_sent(message)
+        else:
+            payload: dict[str, int | str | None] = {"exit_code": message.exit_code}
+            if message.exit_code is None:
+                payload["error"] = message.error or "execution_failed"
+            yield end_frame(payload)
+            delivery.end_sent(message)
 
 
-class RunStreamingResponse(ClosingStreamingResponse):
+class RunStreamingResponse(StreamingResponse):
     def __init__(self, capture: CaptureRun) -> None:
         self._delivery = RunSseDelivery()
+        self._capture = capture
         super().__init__(
-            run_frames(capture, self._delivery), media_type="text/event-stream", headers={"Cache-Control": "no-cache"},
+            iter(()), media_type="text/event-stream", headers={"Cache-Control": "no-cache"},
         )
 
     async def stream_response(self, send: Send) -> None:
@@ -89,7 +95,9 @@ class RunStreamingResponse(ClosingStreamingResponse):
             outcome: Outcome = "failed"
             error_code: str | None = "sse_delivery_failed"
             try:
-                await super().stream_response(send)
+                async with self._capture.subscribe() as messages, aclosing(run_frames(messages, self._delivery)) as frames:
+                    self.body_iterator = frames
+                    await super().stream_response(send)
             except (CancelledError, ClientDisconnect, OSError):
                 outcome, error_code = "disconnected", "client_disconnected"
                 raise
@@ -99,15 +107,25 @@ class RunStreamingResponse(ClosingStreamingResponse):
                 self._delivery.finish(outcome, error_code)
 
 
-@router.post(
-    "/runs",
-    response_class=StreamingResponse,
-    responses={200: {
+RUN_RESPONSE: dict[int | str, dict[str, object]] = {
+    200: {
         "content": {"text/event-stream": {}},
         "headers": {"X-Run-ID": {"description": "ID of the saved capture", "schema": {"type": "string"}}},
-    }},
-)
-def prompt_run(run: Annotated[PromptCapture, Depends(get_prompt_capture)]) -> StreamingResponse:
+    },
+}
+
+
+def accepted_run(run: PromptCapture) -> StreamingResponse:
     response = RunStreamingResponse(run.capture)
     response.headers["X-Run-ID"] = run.run_id
     return response
+
+
+@router.post("/runs", response_class=StreamingResponse, responses=RUN_RESPONSE)
+def prompt_run(run: Annotated[PromptCapture, Depends(get_prompt_capture)]) -> StreamingResponse:
+    return accepted_run(run)
+
+
+@router.post("/runs/{run_id}/continue", response_class=StreamingResponse, responses=RUN_RESPONSE)
+def continue_run(run: Annotated[PromptCapture, Depends(get_continuation_capture)]) -> StreamingResponse:
+    return accepted_run(run)
