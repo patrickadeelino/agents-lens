@@ -32,7 +32,7 @@ from src.application.capture_run import FlushedRecord
 from src.application.run_continuation import RunSession
 from src.domain.trace_events import TimedEvent
 from src.infrastructure.capture_files import CaptureFiles
-from src.infrastructure.read_only_run import ReadOnlyRun
+from src.infrastructure.catalog_run import CatalogRun
 
 LITERAL_PROMPT = '  --help\nLeia o README "juniper" ☕.\n'
 PROBE = """
@@ -47,14 +47,25 @@ resuming = sys.argv[1:3] == ["exec", "resume"]
 assert sys.argv[-3:] == ["--", thread_id, "-"] if resuming else sys.argv[-2:] == ["--", "-"]
 assert "--ephemeral" not in sys.argv
 assert "--json" in sys.argv
-assert 'default_permissions="agent-lens-readme"' in sys.argv
-filesystem = next(arg for arg in sys.argv if arg.startswith('permissions.agent-lens-readme.filesystem='))
-assert json.dumps(str(Path.cwd())) + ' = "read"' in filesystem
-assert 'permissions.agent-lens-readme.network.enabled=false' in sys.argv
+assert 'default_permissions="agent-lens-catalog"' in sys.argv
+filesystem = next(arg for arg in sys.argv if arg.startswith('permissions.agent-lens-catalog.filesystem='))
+assert json.dumps(str(Path.cwd())) + ' = "write"' in filesystem
+assert 'permissions.agent-lens-catalog.network.enabled=false' in sys.argv
 assert 'shell_environment_policy.inherit="none"' in sys.argv
 prompt = sys.stdin.buffer.read().decode("utf-8")
 state = Path(os.environ["CODEX_HOME"])
 marker_file = state / "session-marker"
+if prompt in ("catalog first", "catalog second"):
+    target = Path.cwd() / "catalog.txt"
+    if prompt == "catalog first":
+        target.write_text("category filtering\\n")
+    else:
+        assert target.read_text() == "category filtering\\n"
+        target.write_text(target.read_text() + "pagination\\n")
+    print(json.dumps({"type": "thread.started", "thread_id": thread_id}), flush=True)
+    print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Edit recorded"}}), flush=True)
+    print('{"type":"turn.completed"}', flush=True)
+    raise SystemExit(0)
 if prompt == "independent conversation":
     print(json.dumps({"type": "thread.started", "thread_id": "55555555-5555-4555-8555-555555555555"}), flush=True)
     print('{"type":"turn.completed"}', flush=True)
@@ -198,13 +209,13 @@ def live_http() -> Iterator[tuple[httpx.Client, Event]]:
 
 
 @pytest.fixture
-def run_config(run_workspace: Path) -> ReadOnlyRun:
+def run_config(run_workspace: Path) -> CatalogRun:
     example = run_workspace / "example"
     example.mkdir()
     stub = run_workspace / "fake-codex"
     stub.write_text(f"#!{sys.executable}\n" + PROBE, encoding="utf-8")
     stub.chmod(0o700)
-    return ReadOnlyRun(
+    return CatalogRun(
         binary=stub, state_dir=run_workspace, workspace=example,
         model="test-model", api_key="not-a-real-key",
     )
@@ -212,10 +223,10 @@ def run_config(run_workspace: Path) -> ReadOnlyRun:
 
 @pytest.fixture
 def executor_socket(
-    monkeypatch: pytest.MonkeyPatch, run_workspace: Path, run_config: ReadOnlyRun,
+    monkeypatch: pytest.MonkeyPatch, run_workspace: Path, run_config: CatalogRun,
 ) -> Iterator[Path]:
     unix_path = run_workspace / "executor.sock"
-    monkeypatch.setattr(executor_app.state, "read_only_run", run_config, raising=False)
+    monkeypatch.setattr(executor_app.state, "catalog_run", run_config, raising=False)
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(unix_path))
     with running_server(executor_app, Event(), unix_path=unix_path):
         yield unix_path
@@ -355,6 +366,19 @@ def test_latest_run_resumes_the_thread_once_and_links_survive_api_restart(run_wo
 
 
 @pytest.mark.usefixtures("executor_socket")
+def test_controlled_turns_edit_same_workspace(live_http: tuple[httpx.Client, Event], run_workspace: Path) -> None:
+    backend, _ = live_http
+    first = backend.post("/runs", json={"prompt": "catalog first"})
+    first_id = first.headers["X-Run-ID"]
+    second = backend.post(f"/runs/{first_id}/continue", json={"prompt": "catalog second"})
+    second_id = second.headers["X-Run-ID"]
+    assert (run_workspace / "example" / "catalog.txt").read_text() == "category filtering\npagination\n"
+    detail = backend.get(f"/threads/by-run/{second_id}").json()
+    assert [turn["run_id"] for turn in detail["turns"]] == [first_id, second_id]
+    assert detail["thread_id"] == "c47f8d99-9af1-4219-bc65-a55a27096cb8"
+
+
+@pytest.mark.usefixtures("executor_socket")
 def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
     live_http: tuple[httpx.Client, Event], run_workspace: Path,
 ) -> None:
@@ -435,7 +459,7 @@ def test_run_rejects_unavailable_capture_directory(
 
 def test_run_streams_saved_records_before_exit_and_rejects_a_concurrent_run(
     live_http: tuple[httpx.Client, Event], run_workspace: Path,
-    run_config: ReadOnlyRun, executor_socket: Path,
+    run_config: CatalogRun, executor_socket: Path,
 ) -> None:
     backend, _ = live_http
     with backend.stream("POST", "/runs", json={"prompt": LITERAL_PROMPT}) as response:
@@ -467,7 +491,7 @@ def test_run_streams_saved_records_before_exit_and_rejects_a_concurrent_run(
 
 @pytest.mark.usefixtures("executor_socket")
 def test_run_reports_subprocess_startup_failure(
-    live_http: tuple[httpx.Client, Event], run_config: ReadOnlyRun,
+    live_http: tuple[httpx.Client, Event], run_config: CatalogRun,
 ) -> None:
     backend, _ = live_http
     run_config.binary.unlink()
@@ -663,7 +687,7 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
 
 @pytest.mark.usefixtures("executor_socket")
 def test_executor_redacts_its_key_before_broadcast_and_persistence(
-    live_http: tuple[httpx.Client, Event], run_workspace: Path, run_config: ReadOnlyRun,
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, run_config: CatalogRun,
 ) -> None:
     backend, _ = live_http
     response = backend.post("/runs", json={"prompt": "report a diagnostic"})

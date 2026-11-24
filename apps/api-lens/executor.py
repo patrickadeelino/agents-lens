@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import shutil
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, suppress
@@ -14,6 +15,7 @@ from opentelemetry.trace import Span
 
 from src.api.observability import observed_app
 from src.api.sse import ClosingStreamingResponse
+from src.infrastructure.catalog_run import CatalogRun
 from src.infrastructure.executor_protocol import (
     SESSION_PERSISTENCE_HEADER,
     ExecutorRequest,
@@ -21,7 +23,6 @@ from src.infrastructure.executor_protocol import (
     RunExit,
     RunOutput,
 )
-from src.infrastructure.read_only_run import ReadOnlyRun
 from src.observability import (
     EventProgress,
     event_log,
@@ -38,7 +39,7 @@ app = observed_app(
 execution_lock = asyncio.Lock()
 
 
-async def stream_process(run: ReadOnlyRun, request: ExecutorRequest) -> AsyncGenerator[str]:
+async def stream_process(run: CatalogRun, request: ExecutorRequest) -> AsyncGenerator[str]:
     if execution_lock.locked():
         event_log("executor.rejected", "executor", "rejected", error_code="executor_busy")
         yield RunExit(exit_code=None).model_dump_json() + "\n"
@@ -87,7 +88,7 @@ async def stop_process(process: asyncio.subprocess.Process, stdout: asyncio.Stre
 
 
 async def subprocess_messages(
-    run: ReadOnlyRun, request: ExecutorRequest, span: Span,
+    run: CatalogRun, request: ExecutorRequest, span: Span,
 ) -> AsyncGenerator[RunOutput | RunExit | RunError]:
     progress = EventProgress("executor.subprocess.first_event_read", "subprocess")
     try:
@@ -143,8 +144,8 @@ async def subprocess_messages(
 
 @app.post("/run", response_class=StreamingResponse)
 async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
-    run = getattr(app.state, "read_only_run", None)
-    if not isinstance(run, ReadOnlyRun):
+    run = getattr(app.state, "catalog_run", None)
+    if not isinstance(run, CatalogRun):
         event_log("executor.rejected", "executor", "rejected", error_code="executor_unconfigured")
         raise HTTPException(status_code=503, detail="Read-only executor is not configured.")
     return ClosingStreamingResponse(
@@ -155,24 +156,42 @@ async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Start the host read-only executor on a Unix socket.")
-    parser.add_argument("--socket", required=True)
-    parser.add_argument("--workspace", required=True, type=Path)
-    parser.add_argument("--state-dir", required=True, type=Path)
+    parser = argparse.ArgumentParser(description="Start the host Catalog API executor on its fixed Unix socket.")
     parser.add_argument("--codex-bin", required=True, type=Path)
     parser.add_argument("--model", required=True)
     args = parser.parse_args()
     key = sys.stdin.readline().strip()
     if not key or not key.isascii() or any(char.isspace() for char in key):
         parser.error("Provide the Codex API key via standard input.")
-    app.state.read_only_run = ReadOnlyRun(
+    workspace, state_dir, socket = prepare_catalog_lab(Path(__file__).resolve().parents[2])
+    app.state.catalog_run = CatalogRun(
         binary=args.codex_bin.resolve(strict=True),
-        workspace=args.workspace.resolve(strict=True),
-        state_dir=args.state_dir.resolve(strict=True),
+        workspace=workspace,
+        state_dir=state_dir,
         model=args.model,
         api_key=key,
     )
-    uvicorn.run(app, uds=args.socket, access_log=False)
+    uvicorn.run(app, uds=str(socket), access_log=False)
+
+
+def prepare_catalog_lab(project: Path) -> tuple[Path, Path, Path]:
+    project = project.resolve(strict=True)
+    lab = project / ".local" / "codex-executor" / "catalog"
+    workspace, state, ipc = (lab / name for name in ("workspace", "state", "ipc"))
+    for path in (lab, workspace, state, ipc):
+        if path.resolve() != path:
+            raise ValueError("Catalog lab paths must not contain symlinks.")
+    lab.mkdir(mode=0o700, parents=True, exist_ok=True)
+    state.mkdir(mode=0o700, exist_ok=True)
+    ipc.mkdir(mode=0o700, exist_ok=True)
+    # The backend container uses a different UID and mounts only this directory.
+    ipc.chmod(0o711)
+    if not workspace.exists():
+        shutil.copytree(project / "examples" / "catalog-api", workspace)
+    socket = ipc / "executor.sock"
+    if socket.is_symlink():
+        raise ValueError("Executor socket must not be a symlink.")
+    return workspace.resolve(strict=True), state.resolve(strict=True), socket
 
 
 if __name__ == "__main__":

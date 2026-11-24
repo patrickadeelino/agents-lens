@@ -1,4 +1,4 @@
-"""Configure the host Codex subprocess and its read-only sandbox."""
+"""Configure the host Codex subprocess and its fixed writable catalog sandbox."""
 
 import json
 import os
@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
 
-PROFILE = "agent-lens-readme"
+PROFILE = "agent-lens-catalog"
 
 
 @dataclass(frozen=True)
-class ReadOnlyRun:
+class CatalogRun:
     binary: Path
     workspace: Path
     state_dir: Path
@@ -20,7 +20,7 @@ class ReadOnlyRun:
     def command(self, thread_id: UUID | None = None) -> tuple[str, ...]:
         workspace = json.dumps(str(self.workspace))
         binary = json.dumps(str(self.binary))
-        filesystem = f'{{":root" = "deny", ":minimal" = "read", {workspace} = "read", {binary} = "read"}}'
+        filesystem = f'{{":root" = "deny", ":minimal" = "read", {workspace} = "write", {binary} = "read"}}'
         return (
             str(self.binary), "exec", *(("resume",) if thread_id else ()),
             "--json", "--skip-git-repo-check",
