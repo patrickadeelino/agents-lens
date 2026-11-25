@@ -1,0 +1,35 @@
+# Recorded, fictional conversations. No API key, no executor and no folder of yours is mounted.
+name: agent-lens-demo
+
+services:
+  frontend:
+    # Rebuild on every start, so `docker compose up` never runs a stale image.
+    pull_policy: build
+    build: ./apps/web
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${AGENT_LENS_DEMO_PORT:-8081}:80"
+
+  backend:
+    # Rebuild on every start, so `docker compose up` never runs a stale image.
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: apps/api-lens/Dockerfile
+    command:
+      - sh
+      - -c
+      - "python -m src.infrastructure.demo_data && exec python -m uvicorn app:app --host 0.0.0.0 --port 8000"
+    environment:
+      AGENT_LENS_DEMO: "1"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=4).close()"
+      interval: 5s
+      timeout: 3s
+      retries: 10

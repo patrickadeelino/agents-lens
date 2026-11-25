@@ -38,6 +38,7 @@ const composerError = ref("");
 const selectedWorkspace = ref(null);
 const pickingWorkspace = ref(false);
 const executorReady = ref(null);
+const demoMode = ref(false);
 const checkingExecutor = ref(false);
 const continuationError = ref("");
 const continuationDrafts = reactive(new Map());
@@ -68,6 +69,7 @@ const continuationDraft = computed({
   set: (value) => continuationDrafts.set(conversation.value?.root_run_id, value),
 });
 const continuationNote = computed(() => {
+  if (demoMode.value) return t.demo.continuation;
   if (activeTurn.value) return t.continuation.availableAfter(activeNumber.value);
   if (busy.value) return t.continuation.submitting;
   if (executorReady.value !== true && conversation.value?.continuation?.state === "available") {
@@ -488,7 +490,8 @@ async function checkExecutor() {
   checkingExecutor.value = true;
   try {
     const response = await fetch("/ready", { cache: "no-store", signal: AbortSignal.timeout(5000) });
-    executorReady.value = response.status === 204;
+    demoMode.value = response.headers.get("X-Agent-Lens-Mode") === "demo";
+    executorReady.value = response.status === 204 && !demoMode.value;
   } catch {
     executorReady.value = false;
   } finally {
@@ -661,7 +664,10 @@ onUnmounted(() => {
     </header>
 
     <main class="conversation-main" :class="{ 'home-main': view !== 'thread' }" :inert="drawer || (hasPane && !wideSidebar)">
-      <div v-if="executorReady === false" class="connection-notice executor-notice">
+      <div v-if="demoMode" class="connection-notice executor-notice">
+        <p role="status">{{ t.demo.notice }}</p>
+      </div>
+      <div v-else-if="executorReady === false" class="connection-notice executor-notice">
         <p role="status">{{ t.executor.unavailable }}</p>
         <button type="button" class="secondary" :disabled="checkingExecutor" @click="checkExecutor">{{ t.executor.check }}</button>
       </div>

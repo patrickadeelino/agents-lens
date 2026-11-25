@@ -1,5 +1,6 @@
 """Start an agent run and expose its capture over Server-Sent Events."""
 
+import os
 from asyncio import CancelledError
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
@@ -126,11 +127,15 @@ def accepted_run(run: PromptCapture) -> StreamingResponse:
 
 @router.get("/ready", status_code=204)
 def readiness() -> Response:
+    headers = {"Cache-Control": "no-store"}
+    if os.environ.get("AGENT_LENS_DEMO") == "1":
+        # The demo only reads recordings; the header tells the interface that no executor is expected.
+        return Response(status_code=204, headers=headers | {"X-Agent-Lens-Mode": "demo"})
     try:
         ExecutorClient(executor_socket()).check_ready()
     except (HTTPException, httpx.HTTPError) as error:
         raise HTTPException(status_code=503, detail="Executor unavailable. Check the executor container.") from error
-    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+    return Response(status_code=204, headers=headers)
 
 
 @router.post("/runs", response_class=StreamingResponse, responses=RUN_RESPONSE)

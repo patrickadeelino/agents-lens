@@ -11,8 +11,11 @@ PORTUGUESE = re.compile(
 )
 
 
-def test_shipped_python_contains_no_portuguese() -> None:
-    sources = [PROJECT / "app.py", PROJECT / "executor.py", *sorted((PROJECT / "src").rglob("*.py"))]
+def test_shipped_text_contains_no_portuguese() -> None:
+    sources = [
+        PROJECT / "app.py", PROJECT / "executor.py", PROJECT / "demo" / "recordings.json",
+        *sorted((PROJECT / "src").rglob("*.py")),
+    ]
     found = [
         f"{path.relative_to(PROJECT)}:{number}: {line.strip()}"
         for path in sources

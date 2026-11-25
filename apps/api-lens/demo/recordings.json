@@ -1,0 +1,620 @@
+[
+ {
+  "folder": "/workspace/catalog-api",
+  "thread_id": "22222222-2222-4222-8222-222222222222",
+  "age_minutes": 190,
+  "turns": [
+   {
+    "prompt": "Ask a subagent to read catalog.py and explain the product endpoints.",
+    "events": [
+     [
+      1635,
+      {
+       "type": "thread.started",
+       "thread_id": "22222222-2222-4222-8222-222222222222"
+      }
+     ],
+     [
+      1678,
+      {
+       "type": "turn.started"
+      }
+     ],
+     [
+      5412,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "agent_message",
+        "id": "item-1",
+        "text": ""
+       }
+      }
+     ],
+     [
+      6001,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "agent_message",
+        "id": "item-1",
+        "text": "I will delegate the reading and wait for the subagent report."
+       }
+      }
+     ],
+     [
+      7350,
+      {
+       "type": "delegation.edge",
+       "parent_thread_id": "22222222-2222-4222-8222-222222222222",
+       "parent_turn_id": "turn-1",
+       "item_id": "item-2",
+       "child_thread_id": "thread-2"
+      }
+     ],
+     [
+      7417,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": null,
+       "observation": {
+        "type": "turn.started"
+       }
+      }
+     ],
+     [
+      9002,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "collab_tool_call",
+        "id": "item-3",
+        "tool": "wait",
+        "status": "in_progress"
+       }
+      }
+     ],
+     [
+      10053,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-4",
+       "observation": {
+        "type": "item.started",
+        "item": {
+         "type": "agent_message",
+         "id": "item-4",
+         "text": ""
+        }
+       }
+      }
+     ],
+     [
+      10419,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-4",
+       "observation": {
+        "type": "item.completed",
+        "item": {
+         "type": "agent_message",
+         "id": "item-4",
+         "text": "I will open `catalog.py` in the terminal."
+        }
+       }
+      }
+     ],
+     [
+      10814,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-5",
+       "observation": {
+        "type": "item.started",
+        "item": {
+         "type": "command_execution",
+         "id": "item-5",
+         "command": "/usr/bin/zsh -lc 'cat catalog.py'",
+         "status": "in_progress",
+         "aggregated_output": null,
+         "exit_code": null
+        }
+       }
+      }
+     ],
+     [
+      10815,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-5",
+       "observation": {
+        "type": "item.completed",
+        "item": {
+         "type": "command_execution",
+         "id": "item-5",
+         "command": "/usr/bin/zsh -lc 'cat catalog.py'",
+         "status": "completed",
+         "aggregated_output": "\"\"\"Small synthetic Catalog API, using only Python's standard library.\"\"\"\n\nimport json\nfrom http.server import BaseHTTPRequestHandler, HTTPServer\nfrom urllib.parse import urlsplit\n\nPRODUCTS = [\n    {\"id\": 1, \"name\": \"Notebook\", \"category\": \"stationery\"},\n    {\"id\": 2, \"name\": \"Mug\", \"category\": \"kitchen\"},\n    {\"id\": 3, \"name\": \"Pen\", \"category\": \"stationery\"},\n]\n\n\nclass CatalogHandler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        path = urlsplit(self.path).path\n        if path == \"/products\":\n            self.respond(200, PRODUCTS)\n            return\n        if path.startswith(\"/products/\"):\n            product_id = path.removeprefix(\"/products/\")\n            product = next((item for item in PRODUCTS if str(item[\"id\"]) == product_id), None)\n            if product is not None:\n                self.respond(200, product)\n                return\n        self.respond(404, {\"error\": \"Not found\"})\n\n    def respond(self, status, data):\n        body = json.dumps(data).encode(\"utf-8\")\n        self.send_response(status)\n        self.send_header(\"Content-Type\", \"application/json\")\n        self.send_header(\"Content-Length\", str(len(body)))\n        self.end_headers()\n        self.wfile.write(body)\n\n\nif __name__ == \"__main__\":\n    HTTPServer((\"127.0.0.1\", 8091), CatalogHandler).serve_forever()\n",
+         "exit_code": 0
+        }
+       }
+      }
+     ],
+     [
+      12975,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-6",
+       "observation": {
+        "type": "item.started",
+        "item": {
+         "type": "command_execution",
+         "id": "item-6",
+         "command": "/usr/bin/zsh -lc 'sleep 20'",
+         "status": "in_progress",
+         "aggregated_output": null,
+         "exit_code": null
+        }
+       }
+      }
+     ],
+     [
+      32861,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-6",
+       "observation": {
+        "type": "item.completed",
+        "item": {
+         "type": "command_execution",
+         "id": "item-6",
+         "command": "/usr/bin/zsh -lc 'sleep 20'",
+         "status": "completed",
+         "aggregated_output": null,
+         "exit_code": 0
+        }
+       }
+      }
+     ],
+     [
+      34211,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-7",
+       "observation": {
+        "type": "item.started",
+        "item": {
+         "type": "agent_message",
+         "id": "item-7",
+         "text": ""
+        }
+       }
+      }
+     ],
+     [
+      34933,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": "item-7",
+       "observation": {
+        "type": "item.completed",
+        "item": {
+         "type": "agent_message",
+         "id": "item-7",
+         "text": "`GET /products` lists the catalog products as JSON.  \n`GET /products/{id}` returns the product as JSON or responds with HTTP 404 if the ID does not exist."
+        }
+       }
+      }
+     ],
+     [
+      34944,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "turn_id": "turn-2",
+       "item_id": null,
+       "observation": {
+        "type": "turn.completed",
+        "status": "completed"
+       }
+      }
+     ],
+     [
+      34945,
+      {
+       "type": "delegation.event",
+       "thread_id": "thread-2",
+       "source_thread_id": "22222222-2222-4222-8222-222222222222",
+       "turn_id": "turn-1",
+       "item_id": "item-8",
+       "observation": {
+        "type": "subagent.completed",
+        "item": {
+         "type": "subAgentActivity",
+         "id": "item-8",
+         "kind": "completed"
+        }
+       }
+      }
+     ],
+     [
+      34946,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "collab_tool_call",
+        "id": "item-3",
+        "tool": "wait",
+        "status": "completed"
+       }
+      }
+     ],
+     [
+      36166,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "agent_message",
+        "id": "item-9",
+        "text": ""
+       }
+      }
+     ],
+     [
+      36988,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "agent_message",
+        "id": "item-9",
+        "text": "`GET /products` lists the catalog products as JSON.  \n`GET /products/{id}` returns the product as JSON or responds with HTTP 404 if the ID does not exist."
+       }
+      }
+     ],
+     [
+      37097,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "command_execution",
+        "id": "u1",
+        "command": "/usr/bin/bash -lc 'curl -s localhost:8000/products'",
+        "status": "in_progress"
+       }
+      }
+     ],
+     [
+      37197,
+      {
+       "type": "turn.completed",
+       "usage": {
+        "total_tokens": 49815,
+        "input_tokens": 49658,
+        "cached_input_tokens": 44160,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 157,
+        "reasoning_output_tokens": 0
+       }
+      }
+     ]
+    ]
+   }
+  ]
+ },
+ {
+  "folder": "/workspace/catalog-api",
+  "thread_id": "11111111-1111-4111-8111-111111111111",
+  "age_minutes": 25,
+  "turns": [
+   {
+    "prompt": "Add an optional category filter to GET /products and cover it with tests.",
+    "events": [
+     [
+      0,
+      {
+       "type": "thread.started",
+       "thread_id": "11111111-1111-4111-8111-111111111111"
+      }
+     ],
+     [
+      180,
+      {
+       "type": "turn.started"
+      }
+     ],
+     [
+      1400,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "agent_message",
+        "id": "m1",
+        "text": "I will read the handler and its tests before changing anything."
+       }
+      }
+     ],
+     [
+      1900,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "command_execution",
+        "id": "c1",
+        "command": "/usr/bin/bash -lc 'ls -a'",
+        "status": "in_progress"
+       }
+      }
+     ],
+     [
+      2100,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "command_execution",
+        "id": "c1",
+        "command": "/usr/bin/bash -lc 'ls -a'",
+        "status": "completed",
+        "exit_code": 0,
+        "aggregated_output": ".\n..\nREADME.md\ncatalog.py\ntest_catalog.py\n"
+       }
+      }
+     ],
+     [
+      2600,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "command_execution",
+        "id": "c2",
+        "command": "/usr/bin/bash -lc 'cat catalog.py'",
+        "status": "in_progress"
+       }
+      }
+     ],
+     [
+      2800,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "command_execution",
+        "id": "c2",
+        "command": "/usr/bin/bash -lc 'cat catalog.py'",
+        "status": "completed",
+        "exit_code": 0,
+        "aggregated_output": "PRODUCTS = [\n    {\"id\": 1, \"name\": \"Notebook\", \"category\": \"office\"},\n    {\"id\": 2, \"name\": \"Kettle\", \"category\": \"kitchen\"},\n]\n\ndef list_products():\n    return PRODUCTS\n"
+       }
+      }
+     ],
+     [
+      6200,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "file_change",
+        "id": "f1",
+        "status": "completed",
+        "changes": [
+         {
+          "path": "/workspace/catalog-api/catalog.py",
+          "kind": "update"
+         },
+         {
+          "path": "/workspace/catalog-api/test_catalog.py",
+          "kind": "update"
+         }
+        ]
+       }
+      }
+     ],
+     [
+      6900,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "command_execution",
+        "id": "c3",
+        "command": "/usr/bin/bash -lc 'python3 -m unittest'",
+        "status": "in_progress"
+       }
+      }
+     ],
+     [
+      8300,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "command_execution",
+        "id": "c3",
+        "command": "/usr/bin/bash -lc 'python3 -m unittest'",
+        "status": "failed",
+        "exit_code": 1,
+        "aggregated_output": "FAIL: test_filter_ignores_case (test_catalog.CatalogTest)\nAssertionError: [] != [{'id': 2, 'name': 'Kettle', 'category': 'kitchen'}]\n\nFAILED (failures=1)\n"
+       }
+      }
+     ],
+     [
+      9800,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "agent_message",
+        "id": "m2",
+        "text": "The filter compares categories case-sensitively. I will normalize both sides."
+       }
+      }
+     ],
+     [
+      11200,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "file_change",
+        "id": "f2",
+        "status": "completed",
+        "changes": [
+         {
+          "path": "/workspace/catalog-api/catalog.py",
+          "kind": "update"
+         }
+        ]
+       }
+      }
+     ],
+     [
+      11800,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "command_execution",
+        "id": "c4",
+        "command": "/usr/bin/bash -lc 'python3 -m unittest'",
+        "status": "in_progress"
+       }
+      }
+     ],
+     [
+      13100,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "command_execution",
+        "id": "c4",
+        "command": "/usr/bin/bash -lc 'python3 -m unittest'",
+        "status": "completed",
+        "exit_code": 0,
+        "aggregated_output": "...\nRan 3 tests in 0.002s\n\nOK\n"
+       }
+      }
+     ],
+     [
+      15400,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "agent_message",
+        "id": "m3",
+        "text": "`GET /products` now accepts an optional `category` query parameter.\n\n- Matching ignores case.\n- Without the parameter, all products are returned.\n\nThe three tests pass."
+       }
+      }
+     ],
+     [
+      15600,
+      {
+       "type": "turn.completed",
+       "usage": {
+        "input_tokens": 41820,
+        "output_tokens": 912,
+        "cached_input_tokens": 30208,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 152
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "prompt": "Document the new query parameter in the README.",
+    "events": [
+     [
+      0,
+      {
+       "type": "thread.started",
+       "thread_id": "11111111-1111-4111-8111-111111111111"
+      }
+     ],
+     [
+      180,
+      {
+       "type": "turn.started"
+      }
+     ],
+     [
+      1100,
+      {
+       "type": "item.started",
+       "item": {
+        "type": "command_execution",
+        "id": "c5",
+        "command": "/usr/bin/bash -lc 'grep -n products README.md'",
+        "status": "in_progress"
+       }
+      }
+     ],
+     [
+      1300,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "command_execution",
+        "id": "c5",
+        "command": "/usr/bin/bash -lc 'grep -n products README.md'",
+        "status": "completed",
+        "exit_code": 0,
+        "aggregated_output": "7:GET /products returns every product.\n"
+       }
+      }
+     ],
+     [
+      3900,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "file_change",
+        "id": "f3",
+        "status": "completed",
+        "changes": [
+         {
+          "path": "/workspace/catalog-api/README.md",
+          "kind": "update"
+         }
+        ]
+       }
+      }
+     ],
+     [
+      5200,
+      {
+       "type": "item.completed",
+       "item": {
+        "type": "agent_message",
+        "id": "m4",
+        "text": "I added the `category` parameter and an example request to the README."
+       }
+      }
+     ],
+     [
+      5400,
+      {
+       "type": "turn.completed",
+       "usage": {
+        "input_tokens": 22140,
+        "output_tokens": 240,
+        "cached_input_tokens": 19456,
+        "cache_write_input_tokens": 0,
+        "reasoning_output_tokens": 40
+       }
+      }
+     ]
+    ]
+   }
+  ]
+ }
+]

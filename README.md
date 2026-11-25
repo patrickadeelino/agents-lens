@@ -4,10 +4,18 @@ Agent Lens is a local web interface for Codex App Server. Select a scratch folde
 
 The app reports elapsed time measured by the backend and token counts reported by Codex.
 
+## Try it without an API key
+
+```sh
+docker compose -f compose.demo.yaml up --build --wait
+```
+
+Open [Agent Lens](http://localhost:8081/) and pick a conversation from the history. The demo shows recorded, fictional turns with a failed test, file changes and a subagent. It runs no model and no commands, and mounts none of your folders. Sending prompts is disabled. The demo uses its own port, so it can run next to the live app; set `AGENT_LENS_DEMO_PORT` to change it. Stop it with `docker compose -f compose.demo.yaml down`.
+
 ## Requirements
 
 - Docker with the Compose plugin.
-- An OpenAI API key with access to the model. The live flow was validated with Codex **0.171.0** and `gpt-6.2-sol`.
+- For live runs, an OpenAI API key with access to the model. The live flow was validated with Codex **0.171.0** and `gpt-6.2-sol`.
 - Tested on Linux x86_64 with kernel 5.15. Other systems have not been tested.
 
 ## Quick start

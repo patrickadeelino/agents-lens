@@ -121,6 +121,10 @@ export const t = Object.freeze({
     unavailable: "Executor unavailable. Run docker compose up and check the executor logs.",
     check: "Check connection",
   },
+  demo: {
+    notice: "Demo mode: the conversations are recorded and fictional. Open one from the history. New prompts are disabled.",
+    continuation: "Demo mode: new prompts are disabled.",
+  },
   composer: {
     heading: "What should Codex do?",
     placeholder: "Read the README and find out how to start the service.",
