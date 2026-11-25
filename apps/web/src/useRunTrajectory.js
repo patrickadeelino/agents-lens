@@ -24,8 +24,8 @@ export function useRunTrajectory() {
     historyError.value = "";
   }
 
-  function initialize(page) {
-    projection.prepend(page.events, page.commands);
+  function initialize(page, threadId) {
+    projection.prepend(page.events, page.commands, threadId);
     if (savedOutcome(page).terminal) projection.finish();
     data.value = projection.snapshot();
     nextBefore.value = page.next_before;

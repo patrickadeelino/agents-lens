@@ -13,6 +13,11 @@ export class TrajectoryProjection {
 
   resetRows() {
     this.entries = new Map();
+    this.delegates = new Map();
+    this.delegationCount = 0;
+    this.hasRootStart = false;
+    this.waitTargets = new Map();
+    this.rootThread = this.rootThreadHint ?? null;
     this.commands = new CommandTimeline();
     this.workspace = null;
     this.tokens = [];
@@ -39,7 +44,8 @@ export class TrajectoryProjection {
     return true;
   }
 
-  prepend(events, summaries) {
+  prepend(events, summaries, rootThread) {
+    this.rootThreadHint = rootThread ?? this.rootThreadHint;
     const earlier = events.map(({ record, event_id: id }) => this.accept(record, id, summaries)).filter(Boolean);
     if (!earlier.length) return;
     const terminal = this.terminal;
@@ -55,6 +61,14 @@ export class TrajectoryProjection {
       this.firstOffset = Math.min(this.firstOffset ?? offset, offset);
       this.lastOffset = Math.max(this.lastOffset ?? offset, offset);
     }
+    if (event.type === "thread.started") {
+      this.rootThread = event.thread_id;
+      this.hasRootStart = true;
+    }
+    if (event.type.startsWith("delegation.")) {
+      this.projectDelegation(record, key);
+      return;
+    }
     this.observeTurn(event);
     const command = this.commands.observe(record, duration);
     if (command) {
@@ -62,6 +76,126 @@ export class TrajectoryProjection {
       return;
     }
     this.renderEvent(record, key);
+  }
+
+  delegate(thread) {
+    if (!this.delegates.has(thread)) {
+      this.delegates.set(thread, { thread, turns: new Map(), state: "Em andamento", terminal: false });
+    }
+    return this.delegates.get(thread);
+  }
+
+  delegateTurn(thread, turn) {
+    const branch = this.delegate(thread);
+    if (!branch.turns.has(turn)) {
+      const projection = new TrajectoryProjection();
+      projection.workspace = this.workspace;
+      branch.turns.set(turn, projection);
+    }
+    return branch.turns.get(turn);
+  }
+
+  projectDelegation(record, key) {
+    const { event } = record;
+    if (event.type === "delegation.edge") {
+      const child = this.delegate(event.child_thread_id);
+      if (child.edge) return;
+      child.edge = event;
+      this.delegationCount += 1;
+      child.index = event.child_index ?? (this.hasRootStart ? this.delegationCount : null);
+      const owner = event.parent_thread_id === this.rootThread
+        ? this : this.delegateTurn(event.parent_thread_id, event.parent_turn_id);
+      owner.entries.set(key, { key, branchId: child.thread, event, observedAt: record.elapsed_ns, offset: formatOffset(record.elapsed_ns) });
+      return;
+    }
+    const child = this.delegate(event.thread_id);
+    const observation = event.observation;
+    if (event.type === "delegation.incomplete") {
+      child.state = "Captura incompleta";
+      child.terminal = true;
+    } else if (observation?.type === "subagent.wait") {
+      const wait = JSON.stringify([event.source_thread_id, event.turn_id, event.item_id]);
+      const targets = this.waitTargets.get(wait) ?? [];
+      targets.push(child.thread);
+      this.waitTargets.set(wait, targets);
+      child.summary = observation.state?.message ?? child.summary;
+      if (["completed", "failed", "errored", "shutdown", "interrupted"].includes(observation.state?.status)) {
+        child.terminal = true;
+        child.state = observation.state.status === "completed" ? "Concluído" : "Falhou";
+      }
+    } else if (observation?.type === "subagent.completed") {
+      child.name = observation.item?.agentPath?.split("/").filter(Boolean).at(-1);
+      if (!child.terminal) child.state = "Concluído";
+      child.terminal = true;
+    } else if (observation) {
+      this.projectChild(child, event.turn_id, { ...record, event: observation }, key);
+    }
+  }
+
+  projectChild(child, turn, record, key) {
+    const projection = this.delegateTurn(child.thread, turn);
+    const { event } = record;
+    if (event.type === "turn.started") {
+      child.state = "Em andamento";
+      child.terminal = false;
+    }
+    if (event.type === "turn.completed") {
+      child.terminal = true;
+      child.state = event.status === "completed" ? "Concluído" : event.status === "failed" ? "Falhou" : "Interrompido";
+    }
+    projection.project({ record, key });
+    if (event.type === "turn.completed") projection.finish();
+  }
+
+  treeRows(projection = this, ancestors = [], scope = null) {
+    return [...projection.entries.values()].map((entry) => {
+      if (entry.branchId && !ancestors.includes(entry.branchId)) {
+        const branch = this.delegates.get(entry.branchId);
+        const path = [...ancestors, branch.thread];
+        const rows = [...branch.turns].flatMap(([turn, child]) => this.treeRows(child, path, [branch.thread, turn]));
+        return {
+          ...entry, key: branch.thread, branch: true, rows, ancestors, terminal: branch.terminal || this.terminal,
+          state: !branch.terminal && this.terminal ? "Captura incompleta" : branch.state,
+          label: [`Subagente${branch.index ? ` ${branch.index}` : ""}`, branch.name].filter(Boolean).join(" · "),
+          summary: maskPaths(branch.summary, this.workspace),
+          failed: branch.state === "Falhou" || rows.some((row) => row.failed),
+        };
+      }
+      entry = this.labelWait(entry, scope);
+      if (!scope) return entry;
+      return {
+        ...entry, key: JSON.stringify([...scope, entry.key]), ancestors,
+        callId: `child:${JSON.stringify([...scope, actionCallId(entry)])}`,
+        terminal: projection.terminal || this.terminal,
+      };
+    });
+  }
+
+  labelWait(entry, scope) {
+    const item = entry.event?.item;
+    if (item?.type !== "collab_tool_call" || item.tool !== "wait" || !entry.tool) return entry;
+    const owner = scope?.[0] ?? this.rootThread;
+    const targets = new Set();
+    for (const { event } of entry.records ?? []) {
+      const call = event.item;
+      for (const thread of call.receiver_thread_ids ?? []) targets.add(thread);
+      for (const thread of Object.keys(call.agents_states ?? {})) targets.add(thread);
+    }
+    for (const [identity, threads] of this.waitTargets) {
+      const [source, turn, id] = JSON.parse(identity);
+      if (source === owner && id === item.id && (!scope || turn === scope[1])) {
+        for (const thread of threads) targets.add(thread);
+      }
+    }
+    const branches = [...targets].map((thread) => this.delegates.get(thread));
+    if (!branches.length || branches.some((branch) => !branch?.index || branch.edge?.parent_thread_id !== owner)) {
+      return entry;
+    }
+    const labels = branches.sort((left, right) => left.index - right.index)
+      .map((branch) => branch.name ? `${branch.index} · ${branch.name}` : String(branch.index));
+    const list = new Intl.ListFormat("pt-BR").format(labels);
+    const name = `Aguardar ${labels.length === 1 ? "subagente" : "subagentes"} ${list}`;
+    return { ...entry, tool: { ...entry.tool, name } };
   }
 
   observeTurn(event) {
@@ -123,6 +257,9 @@ export class TrajectoryProjection {
 
   finish() {
     this.terminal = true;
+    for (const branch of this.delegates.values()) {
+      for (const turn of branch.turns.values()) turn.finish();
+    }
     for (const command of this.commands.finish()) this.renderCommand(command);
     for (const [key, entry] of this.entries) {
       if (entry.tool && !entry.tool.terminal) {
@@ -133,7 +270,7 @@ export class TrajectoryProjection {
   }
 
   snapshot() {
-    const rows = [...this.entries.values()];
+    const rows = this.treeRows();
     return {
       rows, workspace: this.workspace, tokens: this.tokens, reply: this.reply, terminal: this.terminal,
       firstOffset: this.firstOffset, lastOffset: this.lastOffset, issue: maskPaths(this.issue, this.workspace),
@@ -144,7 +281,7 @@ export class TrajectoryProjection {
 }
 
 export function actionCallId(entry) {
-  return entry.command?.id ?? (entry.tool ? entry.event?.item?.id : null) ?? entry.key;
+  return entry.callId ?? entry.command?.id ?? (entry.tool ? entry.event?.item?.id : null) ?? entry.key;
 }
 
 export function observedFileChanges(actions, workspace) {
@@ -181,4 +318,8 @@ export function savedOutcome(page) {
     return { status: "failed", detail: "Falhou durante a captura.", terminal: true };
   }
   return runOutcome(page, page.last_turn);
+}
+
+export function flattenTrajectory(rows) {
+  return rows.flatMap((entry) => entry.branch ? [entry, ...flattenTrajectory(entry.rows)] : [entry]);
 }

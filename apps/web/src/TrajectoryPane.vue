@@ -1,13 +1,13 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSummary, trajectoryRows } from "./eventPresentation.js";
-import { actionCallId, observedFileChanges } from "./trajectoryProjection.js";
-import TechnicalEvents from "./TechnicalEvents.vue";
-import TrajectoryEntry from "./TrajectoryEntry.vue";
+import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSummary, isEssential, visibleTrajectoryRows } from "./eventPresentation.js";
+import { actionCallId, flattenTrajectory, observedFileChanges } from "./trajectoryProjection.js";
+import TrajectoryList from "./TrajectoryList.vue";
 
 const props = defineProps({
   model: { type: Object, required: true },
   runId: String,
+  threadId: String,
   summary: Object,
   turnNumber: Number,
   prompt: String,
@@ -44,12 +44,29 @@ let resolvedCall;
 let locatingCall;
 const { data, nextBefore, loadEarlier, loadingEarlier, historyError } = props.model;
 
-function isEssential(entry) {
-  return !entry.startup && (entry.command || entry.tool || entry.failed
-    || ["agent_message", "reasoning"].includes(entry.event?.item?.type));
+const branchChoices = ref(new Map());
+const liveBranches = ref(new Set());
+const flat = computed(() => flattenTrajectory(data.value.rows));
+const visible = computed(() => visibleTrajectoryRows(data.value.rows, filter.value));
+watch(data, (current, previous) => {
+  if (!previous || !props.active || props.replay) return;
+  const known = new Set(flattenTrajectory(previous.rows).filter((row) => row.branch).map((row) => row.key));
+  for (const row of flat.value) {
+    if (row.branch && !known.has(row.key) && row.observedAt >= (previous.lastOffset ?? 0)) {
+      liveBranches.value.add(row.key);
+    }
+  }
+});
+function isBranchOpen(key) {
+  return branchChoices.value.get(key) ?? liveBranches.value.has(key);
 }
-const visible = computed(() => trajectoryRows(data.value.rows, filter.value)
-  .filter(entry => filter.value !== "essential" || isEssential(entry)));
+function setBranch({ key, open }) {
+  branchChoices.value.set(key, open);
+  following.value = false;
+}
+function openAncestors(entry) {
+  for (const key of entry.ancestors ?? []) branchChoices.value.set(key, true);
+}
 const tokenDetails = computed(() => props.summary
   ? reportedTokens({ type: "turn.completed", usage: props.summary.tokens }) : data.value.tokens);
 const tokens = computed(() => tokenSummary(tokenDetails.value));
@@ -65,7 +82,7 @@ function showEvidence(itemId) {
 }
 const files = computed(() => observedFileChanges(data.value.actions, data.value.workspace));
 const expanded = computed(() => {
-  if (props.linkedCall) return data.value.rows.find((entry) => actionCallId(entry) === props.linkedCall)?.key;
+  if (props.linkedCall) return flat.value.find((entry) => actionCallId(entry) === props.linkedCall)?.key;
   if (manuallySelected.value || props.active || props.replay) return selected.value;
   return data.value.failures[0]?.key;
 });
@@ -81,7 +98,13 @@ const headingText = computed(() => props.replay ? "Replay de exemplo"
   : props.turnNumber != null ? `Trajetória · Turno ${props.turnNumber}` : "Trajetória");
 const hasObservedActions = computed(() => props.summary ? actions.value != null : data.value.actions.length > 0
   || (data.value.terminal && data.value.rows.length > 0 && nextBefore.value == null));
-const index = computed(() => data.value.actions.filter((entry) => !entry.startup || filter.value === "all"));
+const index = computed(() => flat.value.filter((entry) => (entry.command || entry.tool)
+  && (!entry.startup || filter.value === "all") && (filter.value !== "failures" || entry.failed)));
+const names = computed(() => new Map(flat.value.filter((row) => row.branch).map((row) => [row.key, row.label])));
+function indexLabel(entry) {
+  return [...(entry.ancestors ?? []).map((key) => names.value.get(key)),
+    entry.title || entry.commandText || entry.tool?.name].join(" / ");
+}
 
 watch(() => props.active && props.connection === "Ao vivo", (active, _, onCleanup) => {
   if (!active) return;
@@ -98,7 +121,7 @@ function scrollTo(top) {
 
 function lastEvent() {
   const pane = viewport.value;
-  const row = timeline.value?.lastElementChild;
+  const row = timeline.value?.$el.lastElementChild;
   if (pane && row) {
     const bottom = row.getBoundingClientRect().bottom;
     scrollTo(pane.scrollTop + bottom - pane.getBoundingClientRect().bottom + 16);
@@ -134,7 +157,7 @@ function select(entry) {
 }
 
 function followLinkTo(entry, focus = false) {
-  const rows = timeline.value?.querySelectorAll("[data-entry-key]") ?? [];
+  const rows = timeline.value?.$el.querySelectorAll("[data-entry-key]") ?? [];
   const row = [...rows].find((element) => element.dataset.entryKey === entry.key);
   if (!row) return;
   const group = row.closest("details.technical-events");
@@ -152,6 +175,7 @@ async function jumpTo(entry) {
   selected.value = entry.key;
   resolvedCall = actionCallId(entry);
   emit("call", resolvedCall);
+  openAncestors(entry);
   await nextTick();
   followLinkTo(entry, true);
 }
@@ -161,7 +185,7 @@ async function earlier() {
   following.value = false;
   const pane = viewport.value;
   const top = pane.getBoundingClientRect().top;
-  const anchor = [...(timeline.value?.children ?? [])].find((row) => row.getBoundingClientRect().bottom > top);
+  const anchor = [...(timeline.value?.$el.children ?? [])].find((row) => row.getBoundingClientRect().bottom > top);
   const previousTop = anchor?.getBoundingClientRect().top;
   await loadEarlier(props.runId);
   await nextTick();
@@ -169,7 +193,7 @@ async function earlier() {
 }
 
 function linkedEntry(call) {
-  return data.value.rows.find((row) => actionCallId(row) === call);
+  return flat.value.find((row) => !row.branch && actionCallId(row) === call);
 }
 
 async function locateAction(call) {
@@ -189,8 +213,9 @@ async function locateAction(call) {
     following.value = false;
     if (!isEssential(entry)) filter.value = "all";
     else if (!entry.failed && filter.value === "failures") filter.value = "essential";
+    openAncestors(entry);
     await nextTick();
-    if (mounted && props.linkedCall === call) followLinkTo(entry);
+    if (mounted && props.linkedCall === call) followLinkTo(entry, true);
   } finally {
     if (locatingCall === call) locatingCall = undefined;
   }
@@ -328,12 +353,12 @@ onUnmounted(() => {
               type="button" :aria-pressed="filter === value" @click="filter = value; following = false">{{ label }}</button>
           </div>
         </div>
-        <details v-if="filter === 'all' && index.length >= 8" class="action-index">
+        <details v-if="(filter === 'all' && index.length >= 8) || index.some((entry) => entry.ancestors?.length)" class="action-index">
           <summary>Índice de ações <span>{{ index.length }}{{ nextBefore != null ? " carregadas" : "" }}</span></summary>
           <nav aria-label="Índice de ações da trajetória">
             <ol>
               <li v-for="entry in index" :key="entry.key">
-                <button class="index-action" type="button" @click="jumpTo(entry)">{{ entry.title || entry.commandText || entry.tool?.name }}</button>
+                <button class="index-action" type="button" @click="jumpTo(entry)">{{ indexLabel(entry) }}</button>
               </li>
             </ol>
           </nav>
@@ -348,21 +373,9 @@ onUnmounted(() => {
           {{ nextBefore != null ? "Carregue os eventos anteriores para localizar a ação deste link." : "A ação deste link não está nos eventos disponíveis." }}
         </p>
         <p v-if="!visible.length" class="empty-timeline">{{ filter === "failures" ? "Nenhuma falha nos eventos carregados." : "Nenhuma ação nos eventos carregados." }}</p>
-        <ol id="timeline" ref="timeline" class="event-list">
-          <li v-for="entry in visible" :key="entry.key"
-            :data-entry-key="entry.key" :data-command-id="entry.command?.id" :data-command-status="(entry.command ?? entry.tool)?.status"
-            :data-failure="entry.failed || undefined" :data-event-type="entry.event?.type"
-            :class="{ 'trajectory-action': entry.command || entry.tool, 'trajectory-message': entry.markdown || entry.omitted || entry.event?.item?.type === 'reasoning' }">
-            <TechnicalEvents v-if="entry.technicalEvents" :events="entry.technicalEvents" :title="entry.groupTitle">
-              <template #entry="{ entry: item }">
-                <TrajectoryEntry :entry="item" :selected="expanded === item.key" :terminal="data.terminal" :workspace="data.workspace"
-                  :run-id="runId" @select="select" @announce="$emit('announce', $event)" />
-              </template>
-            </TechnicalEvents>
-            <TrajectoryEntry v-else :entry="entry" :selected="expanded === entry.key" :terminal="data.terminal" :workspace="data.workspace"
-              :run-id="runId" @select="select" @announce="$emit('announce', $event)" />
-          </li>
-        </ol>
+        <TrajectoryList ref="timeline" :rows="data.rows" :filter="filter" :selected="expanded"
+          :terminal="data.terminal" :workspace="data.workspace" :run-id="runId" :is-open="isBranchOpen"
+          @toggle="setBranch" @select="select" @announce="$emit('announce', $event)" />
       </section>
       <p v-else-if="!loading && !error && !data.rows.length" class="pane-notice" role="status">
         {{ active ? "Aguardando os primeiros eventos." : "Nenhum evento disponível para este turno." }}

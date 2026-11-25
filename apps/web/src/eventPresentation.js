@@ -35,7 +35,7 @@ const tokenLabels = new Map([
 const collaborationLabels = new Map([
   ["spawn_agent", "Iniciar subagente"],
   ["send_input", "Enviar mensagem ao subagente"],
-  ["wait", "Aguardar subagente"],
+  ["wait", "Aguardar atualização de subagente"],
   ["close_agent", "Encerrar subagente"],
   ["resume_agent", "Retomar subagente"],
 ]);
@@ -155,12 +155,17 @@ export function describeEvent(event, workspace) {
     text: !markdown && typeof text === "string" ? maskPaths(text, workspace) : null, tasks, failed, technical };
 }
 
+function isEmptyMessageStart(entry) {
+  const item = entry.event?.item;
+  return entry.event?.type === "item.started" && item?.type === "agent_message" && !(typeof item.text === "string" && item.text.trim());
+}
+
 export function trajectoryRows(rows, view) {
   if (view === "failures") return rows.filter((entry) => entry.failed);
 
   const visible = [];
   for (const entry of rows) {
-    if (entry.startup && view !== "all") continue;
+    if (view !== "all" && (entry.startup || isEmptyMessageStart(entry))) continue;
     const title = entry.startup ? "Inicialização e diagnósticos" : null;
     if (!title && (view === "all" || !entry.technical)) {
       visible.push(entry);
@@ -265,4 +270,13 @@ export function describeTool({ event }, previous) {
     status,
     conflictingResults: Boolean(conflictingResults),
   };
+}
+
+export function isEssential(entry) {
+  return !entry.startup && (entry.branch || entry.command || entry.tool || entry.failed
+    || ["agent_message", "reasoning"].includes(entry.event?.item?.type));
+}
+
+export function visibleTrajectoryRows(rows, view) {
+  return trajectoryRows(rows, view).filter((entry) => view !== "essential" || isEssential(entry));
 }

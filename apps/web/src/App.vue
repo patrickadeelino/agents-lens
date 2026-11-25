@@ -90,6 +90,7 @@ const isCurrentPane = computed(() => replay.value || inspectedRunId.value === ac
 const paneProps = computed(() => ({
   key: replay.value ? "replay" : inspectedRunId.value,
   runId: selectedTurn.value?.run_id,
+  threadId: conversation.value?.thread_id,
   summary: selectedTurn.value?.summary,
   turnNumber: selectedNumber.value,
   prompt: selectedTurn.value?.prompt,
@@ -437,7 +438,7 @@ async function readAcceptedRun(runId, signal) {
   const page = await loadRunHistory(runId, signal);
   signal.throwIfAborted();
   model.reset();
-  model.initialize(page);
+  model.initialize(page, conversation.value?.thread_id);
   liveLoading.value = false;
   const saved = savedOutcome(page);
   if (saved.terminal && conversation.value?.status !== "active") {

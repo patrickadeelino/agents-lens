@@ -92,3 +92,10 @@ test("failed commands preview the last useful line and prefer observed stderr", 
   command.records.push({ event: { type: "item.completed", item: { stderr: "read /Users/demo/test\n" } } });
   assert.equal(commandErrorPreview(command), "read ~/test");
 });
+
+test("keeps empty assistant message starts in All and shows completed text in Essential", () => {
+  const started = { event: { type: "item.started", item: { type: "agent_message", text: "" } } };
+  const completed = { event: { type: "item.completed", item: { type: "agent_message", text: "Done" } } };
+  assert.deepEqual(trajectoryRows([started, completed], "essential"), [completed]);
+  assert.deepEqual(trajectoryRows([started, completed], "all"), [started, completed]);
+});

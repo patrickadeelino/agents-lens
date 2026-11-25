@@ -6,7 +6,7 @@ import { useRunTrajectory } from "./useRunTrajectory.js";
 import TrajectoryPane from "./TrajectoryPane.vue";
 
 defineOptions({ inheritAttrs: false });
-const props = defineProps({ runId: { type: String, required: true }, status: String });
+const props = defineProps({ runId: { type: String, required: true }, status: String, threadId: String });
 const emit = defineEmits(["observed"]);
 const model = useRunTrajectory();
 const loading = ref(true);
@@ -23,7 +23,7 @@ async function load() {
   try {
     const page = await loadRunHistory(props.runId, current.signal);
     current.signal.throwIfAborted();
-    model.initialize(page);
+    model.initialize(page, props.threadId);
     const outcome = savedOutcome(page);
     detail.value = outcome.detail ?? (outcome.status === "failed" ? model.data.value.issue : "");
   } catch {

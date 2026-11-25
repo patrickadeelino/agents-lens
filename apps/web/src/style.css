@@ -1078,3 +1078,18 @@ pre {
   color: var(--ink-muted);
 }
 .trajectory-events .message-marker svg { display: block; inline-size: 100%; block-size: 100%; }
+
+.delegation-branch > summary {
+  cursor: pointer;
+  padding: 10px var(--lane-inset);
+  overflow-wrap: anywhere;
+}
+.delegation-branch > summary:focus-visible {
+  outline: 2px solid var(--accent-link);
+  outline-offset: -2px;
+}
+.delegation-result { display: block; margin-block-start: 4px; white-space: pre-wrap; }
+.delegation-state { margin-inline-start: 6px; color: var(--ink); font-size: 0.875em; }
+.delegation-summary { margin: 0; padding: 0 var(--lane-inset) 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.delegation-branch > .event-list { margin-inline-start: clamp(5px, 1.3vw, 16px); padding-block-end: 6px; }
+.delegation-branch .delegation-branch > .event-list { margin-inline-start: 5px; }
