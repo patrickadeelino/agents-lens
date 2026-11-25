@@ -3,7 +3,7 @@ services:
     build: ./apps/web
     depends_on:
       backend:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "127.0.0.1:${AGENT_LENS_PORT:-8080}:80"
 
@@ -37,7 +37,7 @@ services:
         - CMD
         - python
         - -c
-        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/openapi.json', timeout=2).close()"
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=4).close()"
       interval: 5s
       timeout: 3s
       retries: 10

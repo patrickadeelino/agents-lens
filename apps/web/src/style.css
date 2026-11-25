@@ -79,6 +79,7 @@ textarea::placeholder { color: var(--ink-muted); }
 .workspace-permissions { display: flex; flex-wrap: wrap; gap: 6px; }
 .workspace-permissions span { padding: 2px 6px; background: var(--surface-muted); border-radius: 4px; }
 .quiet-label { color: var(--ink-muted); font-size: .75rem; font-weight: 600; }
+.executor-notice { margin: 10px var(--column-space) 0; }
 .connection-notice button { padding: 5px 10px; font-size: .8rem; }
 .composer-status { margin-block-start: 12px; color: var(--ink-muted); }
 .connection-notice { background: var(--surface-muted); }

@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "127.0.0.1",
       proxy: {
-        "^/(workspace-picker|runs(/[A-Za-z0-9_-]+/(events|stream|continue))?|threads(/by-run/[A-Za-z0-9_-]+|/[A-Fa-f0-9-]+)?)(\\?|$)": `http://127.0.0.1:${port}`,
+        "^/(ready|workspace-picker|runs(/[A-Za-z0-9_-]+/(events|stream|continue))?|threads(/by-run/[A-Za-z0-9_-]+|/[A-Fa-f0-9-]+)?)(\\?|$)": `http://127.0.0.1:${port}`,
       },
     },
   };

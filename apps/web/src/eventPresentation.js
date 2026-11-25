@@ -95,8 +95,21 @@ export function displayValue(value, workspace) {
 }
 
 export function statusPresentation(status) {
-  const [icon, label] = statuses.get(status) ?? statuses.get("result_unconfirmed");
-  return { icon, label, failed: status === "failed" || status === "declined" };
+  const statusKey = statuses.has(status) ? status : "result_unconfirmed";
+  const [icon, label] = statuses.get(statusKey);
+  return { icon, label, statusKey, failed: status === "failed" || status === "declined" };
+}
+
+const branchStates = new Map([
+  ["running", "Em andamento"],
+  ["completed", "Concluído"],
+  ["failed", "Falhou"],
+  ["interrupted", "Interrompido"],
+  ["incomplete", "Captura incompleta"],
+]);
+
+export function branchStateLabel(state) {
+  return branchStates.get(state) ?? state;
 }
 
 export function firstLine(text) {

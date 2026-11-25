@@ -19,7 +19,7 @@ const title = computed(() => {
   return props.entry.title || (props.entry.command ? "Executar comando" : name.value);
 });
 const fileChange = computed(() => props.entry.event?.item?.type === "file_change");
-const label = computed(() => props.entry.label === "Não confirmado" && !props.terminal
+const label = computed(() => props.entry.statusKey === "result_unconfirmed" && !props.terminal
   ? "Resultado indisponível" : props.entry.label);
 const conflicting = computed(() => Boolean((props.entry.command ?? props.entry.tool).conflictingResults));
 const accessibleName = computed(() => [
@@ -45,7 +45,7 @@ const accessibleName = computed(() => [
       <span class="command-title">{{ title }}</span>
       <code v-if="entry.command" class="command-literal" :title="name">{{ name }}</code>
     </span>
-    <span class="command-status">{{ fileChange && !entry.failed && label === "Concluído" ? "Alteração" : label }}</span>
+    <span class="command-status">{{ fileChange && !entry.failed && entry.statusKey === "completed" ? "Alteração" : label }}</span>
     <span v-if="entry.offset" class="command-times command-offset" title="Primeira observação na captura">{{ entry.offset }}</span>
     <span v-if="conflicting" class="failure-preview">Resultados divergentes</span>
     <span v-else-if="entry.preview && !selected" class="failure-preview">{{ entry.preview }}</span>

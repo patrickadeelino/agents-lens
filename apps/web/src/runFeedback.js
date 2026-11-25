@@ -1,4 +1,5 @@
 import { onUnmounted, ref, watch } from "vue";
+import { CONNECTION } from "./connectionState.js";
 import { displayCommand, maskPaths } from "./eventPresentation.js";
 
 export function useRunFeedback(connection) {
@@ -31,13 +32,13 @@ export function useRunFeedback(connection) {
 
   watch(connection, (current, previous) => {
     clearInterval(ageTimer);
-    if (current === "Reconectando") {
+    if (current === CONNECTION.reconnecting) {
       recovering = false;
       recovered.value = null;
       refreshAge();
       ageTimer = setInterval(refreshAge, 1000);
       announce("Conexão perdida. Tentando reconectar.");
-    } else if (previous === "Reconectando" && current === "Recebendo eventos") {
+    } else if (previous === CONNECTION.reconnecting && current === CONNECTION.receiving) {
       recovering = true;
       recovered.value = 0;
       announce("Reconectado.");
@@ -46,7 +47,7 @@ export function useRunFeedback(connection) {
         recovered.value = null;
         recovering = false;
       }, 5000);
-    } else if (current === "Interrompida") {
+    } else if (current === CONNECTION.interrupted) {
       recovered.value = null;
       recovering = false;
       announce("Fluxo de eventos interrompido.");

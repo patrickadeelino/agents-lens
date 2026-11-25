@@ -29,6 +29,7 @@ from src.infrastructure.executor_protocol import (
     RunError,
     RunExit,
     RunOutput,
+    WorkspaceCheck,
     WorkspaceSelection,
 )
 from src.observability import (
@@ -74,6 +75,18 @@ def confirmed_workspace(path: Path, run: ExecutorConfig) -> Path:
     if checked_workspace(path, run) != path:
         raise HTTPException(status_code=409, detail="Workspace directory changed.")
     return path
+
+
+@app.get("/ready", status_code=204)
+def readiness() -> Response:
+    configured_run()
+    return Response(status_code=204)
+
+
+@app.post("/workspace-check", status_code=204)
+def validate_workspace(request: WorkspaceCheck) -> Response:
+    confirmed_workspace(Path(request.workspace), configured_run())
+    return Response(status_code=204)
 
 
 async def pick_directory() -> Path | None:

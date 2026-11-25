@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { visibleTrajectoryRows } from "./eventPresentation.js";
+import { branchStateLabel, visibleTrajectoryRows } from "./eventPresentation.js";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import TrajectoryEntry from "./TrajectoryEntry.vue";
 
@@ -26,7 +26,7 @@ function toggle(key, event) {
       <details v-if="entry.branch" class="delegation-branch" :open="isOpen(entry.key)"
         @toggle="toggle(entry.key, $event)">
         <summary>
-          <span>{{ entry.label }}</span> <span class="delegation-state">{{ entry.state }}</span>
+          <span>{{ entry.label }}</span> <span class="delegation-state">{{ branchStateLabel(entry.state) }}</span>
           <span v-if="entry.summary" class="delegation-result">{{ entry.summary }}</span>
         </summary>
         <TrajectoryList :rows="entry.rows" :filter="filter" :selected="selected" :terminal="entry.terminal"

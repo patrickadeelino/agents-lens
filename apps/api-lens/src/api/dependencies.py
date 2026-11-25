@@ -84,6 +84,7 @@ def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> Promp
     if session is None or not session.workspace:
         raise HTTPException(status_code=409, detail="Esta conversa não tem uma pasta registrada.")
     workspace = session.workspace
+    check_resume_workspace(socket, workspace)
     output = create_capture(request.prompt, previous_run_id=run_id, workspace=workspace)
     try:
         origin.reserve_successor(output)
@@ -94,6 +95,19 @@ def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> Promp
         output.discard_unpublished()
         raise HTTPException(status_code=503, detail="Capture directory is unavailable.") from error
     return prepare_capture(request.prompt, socket, output, thread_id=thread_id, workspace=workspace)
+
+
+def check_resume_workspace(socket: str, workspace: str) -> None:
+    try:
+        ExecutorClient(socket).check_workspace(workspace)
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 409:
+            raise HTTPException(
+                status_code=422, detail="A pasta desta conversa está indisponível. Restaure a pasta e tente novamente.",
+            ) from error
+        raise HTTPException(status_code=503, detail="Executor indisponível.") from error
+    except httpx.RequestError as error:
+        raise HTTPException(status_code=503, detail="Executor indisponível.") from error
 
 
 def resumable_capture(run_id: str) -> tuple[CaptureFiles, UUID]:

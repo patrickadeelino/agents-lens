@@ -571,6 +571,45 @@ def test_picker_runs_in_the_selected_original_directory(
 
 
 @pytest.mark.usefixtures("executor_socket")
+def test_readiness_checks_the_host_executor(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _ = live_http
+    assert backend.get("/ready").status_code == 204
+    monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "missing.sock"))
+    assert backend.get("/ready").status_code == 503
+    assert backend.get("/threads").json() == {"threads": []}
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_unavailable_workspace_does_not_reserve_a_continuation(
+    live_http: tuple[httpx.Client, Event], run_config: CatalogRun,
+) -> None:
+    backend, _ = live_http
+    first = backend.post("/runs", json=prompt_body("save marker: niobium"))
+    origin = first.headers["X-Run-ID"]
+    follow_up = f"/runs/{origin}/continue"
+    moved = run_config.workspace.with_name("workspace-moved")
+    run_config.workspace.rename(moved)
+    try:
+        rejected = backend.post(follow_up, json={"prompt": "recall the marker"})
+        assert rejected.status_code == 422
+        assert "Restaure a pasta" in rejected.json()["detail"]
+        assert "X-Run-ID" not in rejected.headers
+        detail = backend.get(f"/threads/by-run/{origin}").json()
+        assert detail["continuation"]["state"] == "available"
+        assert len(detail["turns"]) == 1
+    finally:
+        moved.rename(run_config.workspace)
+
+    resumed = backend.post(follow_up, json={"prompt": "recall the marker"})
+    assert resumed.status_code == 200
+    detail = backend.get(f"/threads/by-run/{resumed.headers['X-Run-ID']}").json()
+    assert detail["root_run_id"] == origin
+    assert detail["turns"][1]["assistant_markdown"] == "niobium"
+
+
+@pytest.mark.usefixtures("executor_socket")
 def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
     live_http: tuple[httpx.Client, Event], run_workspace: Path,
 ) -> None:

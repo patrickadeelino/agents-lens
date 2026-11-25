@@ -5,6 +5,7 @@ import ConversationTurn from "./ConversationTurn.vue";
 import HistoricalTrajectory from "./HistoricalTrajectory.vue";
 import TrajectoryPane from "./TrajectoryPane.vue";
 import { inspectionUrl, resolveInspectedRun, workspaceName } from "./conversationNavigation.js";
+import { CONNECTION } from "./connectionState.js";
 import { maskPaths } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamContinuation, streamPrompt, streamSavedRun } from "./runs.js";
 import { runOutcome, savedOutcome } from "./trajectoryProjection.js";
@@ -35,12 +36,14 @@ const composerError = ref("");
 const selectedWorkspace = ref(null);
 const pickingWorkspace = ref(false);
 const workspaceError = ref("");
+const executorReady = ref(null);
+const checkingExecutor = ref(false);
 const continuationError = ref("");
 const continuationDrafts = reactive(new Map());
 const observed = reactive(new Map());
 const paneScroll = new Map();
 const model = useRunTrajectory();
-const connection = ref("Inativa");
+const connection = ref(CONNECTION.idle);
 const outcome = shallowRef(null);
 const liveLoading = ref(false);
 const feedback = useRunFeedback(connection);
@@ -58,7 +61,7 @@ const latestTurn = computed(() => turns.value.at(-1));
 const activeTurn = computed(() => latestTurn.value?.status === "active" ? latestTurn.value : null);
 const activeNumber = computed(() => activeTurn.value ? turns.value.length : null);
 const hasPane = computed(() => selectedTurn.value != null);
-const canContinue = computed(() => !busy.value && !activeTurn.value && conversation.value?.continuation?.state === "available");
+const canContinue = computed(() => executorReady.value && !busy.value && !activeTurn.value && conversation.value?.continuation?.state === "available");
 const continuationDraft = computed({
   get: () => continuationDrafts.get(conversation.value?.root_run_id) ?? "",
   set: (value) => continuationDrafts.set(conversation.value?.root_run_id, value),
@@ -66,16 +69,15 @@ const continuationDraft = computed({
 const continuationNote = computed(() => {
   if (activeTurn.value) return `Disponível quando o turno ${activeNumber.value} terminar.`;
   if (busy.value) return "Enviando o pedido…";
+  if (executorReady.value !== true && conversation.value?.continuation?.state === "available") {
+    return executorReady.value === false ? "A retomada exige o executor local." : "Verificando o executor local…";
+  }
   return ({
     ephemeral: "Esta execução não salvou uma sessão do Codex.",
     active: "Aguarde a execução terminar para continuar.",
     superseded: "Esta conversa tem uma execução mais recente.",
   })[conversation.value?.continuation?.state] ?? "O Codex não confirmou uma sessão disponível para esta execução.";
 });
-const connectionLabel = computed(() => ({
-  "Recebendo eventos": "Ao vivo", "Reconectando": "Reconectando…",
-  "Fluxo encerrado": "Encerrado",
-})[connection.value] ?? connection.value);
 const sidebarThreads = computed(() => {
   const current = conversation.value;
   if (!current || current.legacy) return threads.value;
@@ -95,7 +97,7 @@ const paneProps = computed(() => ({
   status: turnLabel(selectedTurn.value?.status),
   active: !!activeTurn.value && activeTurn.value.run_id === inspectedRunId.value,
   activeTurnNumber: activeNumber.value,
-  activeConnection: connectionLabel.value,
+  activeConnection: connection.value,
   linkedCall: linkedCall.value,
   initialScroll: paneScroll.get(inspectedRunId.value) ?? 0,
   focusOnOpen: focusInspection.value,
@@ -255,7 +257,7 @@ function resetLive(runId = null) {
   feedback.reset();
   activeRunId.value = runId;
   outcome.value = null;
-  connection.value = "Inativa";
+  connection.value = CONNECTION.idle;
   liveLoading.value = false;
 }
 
@@ -371,7 +373,7 @@ function acceptedRun(runId, text, origin) {
     writeLocation(url, window.history.state, true);
   }
   canonicalize();
-  connection.value = "Recebendo eventos";
+  connection.value = CONNECTION.receiving;
   scrollConversationToEnd(!origin && !hasPane.value);
   if (!origin && hasPane.value) nextTick(() => {
     const destination = window.matchMedia("(max-width: 1200px)").matches
@@ -406,7 +408,7 @@ function observedTurn(previous, { event }) {
 function finishCapture(result, turn) {
   const final = runOutcome(result, turn);
   applyOutcome(final);
-  connection.value = final.terminal ? "Fluxo encerrado" : "Interrompida";
+  connection.value = final.terminal ? CONNECTION.ended : CONNECTION.interrupted;
   if (final.status !== "completed") announce(turnLabel(final.status));
 }
 
@@ -437,19 +439,19 @@ async function readAcceptedRun(runId, signal) {
   const saved = savedOutcome(page);
   if (saved.terminal && conversation.value?.status !== "active") {
     applyOutcome(saved);
-    connection.value = "Fluxo encerrado";
+    connection.value = CONNECTION.ended;
     await refreshConversation(runId, signal, page.continuation);
     return;
   }
   let turn = page.last_turn;
   const result = await streamSavedRun(runId, page.latest_event_id ?? 0, {
     signal,
-    onOpen: () => { connection.value = "Recebendo eventos"; },
+    onOpen: () => { connection.value = CONNECTION.receiving; },
     onRecord(record, id) {
       appendRecord(record, id);
       turn = observedTurn(turn, record);
     },
-    onReconnect: () => { connection.value = "Reconectando"; },
+    onReconnect: () => { connection.value = CONNECTION.reconnecting; },
   });
   signal.throwIfAborted();
   finishCapture(result, turn);
@@ -459,9 +461,9 @@ async function readAcceptedRun(runId, signal) {
 function resumeObservation(runId) {
   const request = beginOperation();
   if (activeRunId.value !== runId) resetLive(runId);
-  connection.value = "Carregando histórico";
+  connection.value = CONNECTION.loading;
   return readAcceptedRun(runId, request.signal).catch(() => {
-    if (!request.signal.aborted) connection.value = "Interrompida";
+    if (!request.signal.aborted) connection.value = CONNECTION.interrupted;
   }).finally(() => finishOperation(request));
 }
 
@@ -473,16 +475,29 @@ function submitError(error) {
 }
 
 async function recoverSubmission(runId, signal) {
-  connection.value = "Reconectando";
+  connection.value = CONNECTION.reconnecting;
   try {
     await readAcceptedRun(runId, signal);
   } catch {
-    if (!signal.aborted) connection.value = "Interrompida";
+    if (!signal.aborted) connection.value = CONNECTION.interrupted;
+  }
+}
+
+async function checkExecutor() {
+  if (checkingExecutor.value) return;
+  checkingExecutor.value = true;
+  try {
+    const response = await fetch("/ready", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+    executorReady.value = response.status === 204;
+  } catch {
+    executorReady.value = false;
+  } finally {
+    checkingExecutor.value = false;
   }
 }
 
 async function chooseWorkspace() {
-  if (pickingWorkspace.value || busy.value) return;
+  if (!executorReady.value || pickingWorkspace.value || busy.value) return;
   pickingWorkspace.value = true;
   workspaceError.value = "";
   try {
@@ -491,7 +506,10 @@ async function chooseWorkspace() {
     });
     if (response.status === 204) return;
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail);
+    if (!response.ok) {
+      if (response.status === 503) checkExecutor();
+      throw new Error(payload.detail);
+    }
     selectedWorkspace.value = payload;
   } catch (error) {
     workspaceError.value = error.message;
@@ -501,7 +519,7 @@ async function chooseWorkspace() {
 }
 
 async function sendPrompt(text, origin = null) {
-  if (busy.value || !text.trim() || (origin ? !canContinue.value : (!selectedWorkspace.value || pickingWorkspace.value))) return;
+  if (!executorReady.value || busy.value || !text.trim() || (origin ? !canContinue.value : (!selectedWorkspace.value || pickingWorkspace.value))) return;
   composerError.value = "";
   continuationError.value = "";
   const request = beginOperation();
@@ -530,6 +548,7 @@ async function sendPrompt(text, origin = null) {
     } else if (accepted) await recoverSubmission(accepted, signal);
   } catch (error) {
     if (signal.aborted) return;
+    if (error instanceof RunHttpError && error.status === 503) checkExecutor();
     if (accepted) await recoverSubmission(accepted, signal);
     else if (!origin) composerError.value = submitError(error);
     else if (error instanceof RunHttpError && error.status === 409) {
@@ -618,6 +637,8 @@ onMounted(() => {
   window.addEventListener("popstate", navigateHistory);
   window.addEventListener("hashchange", synchronizeHash);
   window.addEventListener("keydown", onEscape);
+  window.addEventListener("focus", checkExecutor);
+  checkExecutor();
   restoreLocation();
 });
 
@@ -626,6 +647,7 @@ onUnmounted(() => {
   window.removeEventListener("popstate", navigateHistory);
   window.removeEventListener("hashchange", synchronizeHash);
   window.removeEventListener("keydown", onEscape);
+  window.removeEventListener("focus", checkExecutor);
   locationRequest?.abort();
   listRequest?.abort();
   cancelOperation();
@@ -651,6 +673,10 @@ onUnmounted(() => {
     </header>
 
     <main class="conversation-main" :class="{ 'home-main': view !== 'thread' }" :inert="drawer || (hasPane && !wideSidebar)">
+      <div v-if="executorReady === false" class="connection-notice executor-notice">
+        <p role="status">Executor indisponível. Inicie o executor no host e confira o socket.</p>
+        <button type="button" class="secondary" :disabled="checkingExecutor" @click="checkExecutor">Verificar conexão</button>
+      </div>
       <section v-if="view === 'home'" class="home-composer" aria-labelledby="composer-title">
         <p v-if="navigationError" class="composer-status" role="alert">
           {{ navigationError }} <button type="button" class="link-button" @click="restoreLocation()">Tentar novamente</button>
@@ -663,13 +689,13 @@ onUnmounted(() => {
             @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
             @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
           <div class="workspace-summary">
-            <button type="button" class="secondary compact-button" :disabled="busy || pickingWorkspace" @click="chooseWorkspace">
+            <button type="button" class="secondary compact-button" :disabled="!executorReady || busy || pickingWorkspace" @click="chooseWorkspace">
               {{ pickingWorkspace ? "Aguardando seleção…" : "Selecionar pasta" }}
             </button>
             <p v-if="selectedWorkspace" class="workspace-path">{{ selectedWorkspace.path }}</p>
           </div>
           <div class="run-actions">
-            <button id="execute" type="submit" :disabled="busy || pickingWorkspace || !selectedWorkspace || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
+            <button id="execute" type="submit" :disabled="!executorReady || busy || pickingWorkspace || !selectedWorkspace || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
               {{ busy ? "Enviando…" : "Executar" }}
             </button>
             <kbd>Ctrl/⌘ + Enter</kbd>
@@ -694,14 +720,14 @@ onUnmounted(() => {
               <span class="turn-state-dot" aria-hidden="true"></span> Turno {{ activeNumber }} em andamento
             </button>
           </div>
-          <div v-if="connection === 'Reconectando' || connection === 'Interrompida'" class="connection-notice">
-            <p role="status">{{ connection === 'Reconectando' ? "Reconectando ao turno ativo…" : "A conexão com a execução foi interrompida." }}</p>
+          <div v-if="connection === CONNECTION.reconnecting || connection === CONNECTION.interrupted" class="connection-notice">
+            <p role="status">{{ connection === CONNECTION.reconnecting ? "Reconectando ao turno ativo…" : "A conexão com a execução foi interrompida." }}</p>
             <button v-if="activeRunId" type="button" class="secondary" @click="resumeObservation(activeRunId)">Tentar agora</button>
           </div>
         </header>
         <ol ref="turnScroller" class="turn-list" aria-label="Turnos da conversa">
           <ConversationTurn v-for="(turn, index) in turns" :key="turn.run_id" :turn="presentedTurn(turn)" :number="index + 1"
-            :selected="inspectedRunId === turn.run_id" :live="turn.run_id === activeRunId && connectionLabel === 'Ao vivo'" :observed="turnEvidence(turn)"
+            :selected="inspectedRunId === turn.run_id" :live="turn.run_id === activeRunId && connection === CONNECTION.receiving" :observed="turnEvidence(turn)"
             :workspace="observed.get(turn.run_id)?.workspace || (turn.run_id === activeRunId ? model.data.value.workspace : undefined)"
             :activity="turn.run_id === activeTurn?.run_id ? liveAction?.title || liveAction?.tool?.name || liveAction?.commandText : undefined"
             @inspect="inspectTurn" />
@@ -725,7 +751,7 @@ onUnmounted(() => {
 
     <div v-if="hasPane" class="trajectory-region" :inert="drawer">
       <TrajectoryPane v-if="isCurrentPane" v-bind="paneProps" :model="model"
-        :connection="connectionLabel"
+        :connection="connection"
         :last-update-seconds="lastUpdateSeconds" :recovered="recovered" :loading="liveLoading"
         :detail="outcome?.detail || (liveTurn?.status === 'failed' ? model.data.value.issue : undefined)"
         closeable

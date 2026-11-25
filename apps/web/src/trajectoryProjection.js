@@ -80,7 +80,7 @@ export class TrajectoryProjection {
 
   delegate(thread) {
     if (!this.delegates.has(thread)) {
-      this.delegates.set(thread, { thread, turns: new Map(), state: "Em andamento", terminal: false });
+      this.delegates.set(thread, { thread, turns: new Map(), state: "running", terminal: false });
     }
     return this.delegates.get(thread);
   }
@@ -111,7 +111,7 @@ export class TrajectoryProjection {
     const child = this.delegate(event.thread_id);
     const observation = event.observation;
     if (event.type === "delegation.incomplete") {
-      child.state = "Captura incompleta";
+      child.state = "incomplete";
       child.terminal = true;
     } else if (observation?.type === "subagent.wait") {
       const wait = JSON.stringify([event.source_thread_id, event.turn_id, event.item_id]);
@@ -121,11 +121,11 @@ export class TrajectoryProjection {
       child.summary = observation.state?.message ?? child.summary;
       if (["completed", "failed", "errored", "shutdown", "interrupted"].includes(observation.state?.status)) {
         child.terminal = true;
-        child.state = observation.state.status === "completed" ? "Concluído" : "Falhou";
+        child.state = observation.state.status === "completed" ? "completed" : "failed";
       }
     } else if (observation?.type === "subagent.completed") {
       child.name = observation.item?.agentPath?.split("/").filter(Boolean).at(-1);
-      if (!child.terminal) child.state = "Concluído";
+      if (!child.terminal) child.state = "completed";
       child.terminal = true;
     } else if (observation) {
       this.projectChild(child, event.turn_id, { ...record, event: observation }, key);
@@ -136,12 +136,12 @@ export class TrajectoryProjection {
     const projection = this.delegateTurn(child.thread, turn);
     const { event } = record;
     if (event.type === "turn.started") {
-      child.state = "Em andamento";
+      child.state = "running";
       child.terminal = false;
     }
     if (event.type === "turn.completed") {
       child.terminal = true;
-      child.state = event.status === "completed" ? "Concluído" : event.status === "failed" ? "Falhou" : "Interrompido";
+      child.state = event.status === "completed" ? "completed" : event.status === "failed" ? "failed" : "interrupted";
     }
     projection.project({ record, key });
     if (event.type === "turn.completed") projection.finish();
@@ -155,10 +155,10 @@ export class TrajectoryProjection {
         const rows = [...branch.turns].flatMap(([turn, child]) => this.treeRows(child, path, [branch.thread, turn]));
         return {
           ...entry, key: branch.thread, branch: true, rows, ancestors, terminal: branch.terminal || this.terminal,
-          state: !branch.terminal && this.terminal ? "Captura incompleta" : branch.state,
+          state: !branch.terminal && this.terminal ? "incomplete" : branch.state,
           label: [`Subagente${branch.index ? ` ${branch.index}` : ""}`, branch.name].filter(Boolean).join(" · "),
           summary: maskPaths(branch.summary, this.workspace),
-          failed: branch.state === "Falhou" || rows.some((row) => row.failed),
+          failed: branch.state === "failed" || rows.some((row) => row.failed),
         };
       }
       entry = this.labelWait(entry, scope);

@@ -38,6 +38,12 @@ class ExecutorClient:
     def __init__(self, socket: str) -> None:
         self._socket = socket
 
+    def check_ready(self) -> None:
+        self._workspace_request("GET", "/ready", timeout=2)
+
+    def check_workspace(self, workspace: str) -> None:
+        self._workspace_request("POST", "/workspace-check", timeout=2, payload={"workspace": workspace})
+
     def select_workspace(self) -> WorkspaceSelection | None:
         response = self._workspace_request("POST", "/workspace-picker", timeout=130)
         return None if response.status_code == 204 else WorkspaceSelection.model_validate_json(response.content)
@@ -47,12 +53,14 @@ class ExecutorClient:
             self._workspace_request("GET", f"/workspaces/{selection_id}", timeout=5).content,
         ).path
 
-    def _workspace_request(self, method: str, path: str, *, timeout: int) -> httpx.Response:
+    def _workspace_request(
+        self, method: str, path: str, *, timeout: int, payload: dict[str, str] | None = None,
+    ) -> httpx.Response:
         with httpx.Client(
             transport=httpx.HTTPTransport(uds=self._socket),
             base_url="http://executor-host", timeout=timeout, trust_env=False,
         ) as client:
-            return client.request(method, path).raise_for_status()
+            return client.request(method, path, json=payload).raise_for_status()
 
     def run(
         self, prompt: str, on_stdout: StdoutConsumer, *,

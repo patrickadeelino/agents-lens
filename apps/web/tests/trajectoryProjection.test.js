@@ -68,7 +68,7 @@ test("projects the real sanitized delegation without adding child actions to par
   const view = projection.snapshot();
   assert.equal(view.actions.length, 1);
   const child = view.rows.find((entry) => entry.branch);
-  assert.equal(child.state, "Concluído");
+  assert.equal(child.state, "completed");
   const read = child.rows.find((entry) => entry.command?.command.includes("cat catalog.py"));
   assert.match(read.command.output, /class CatalogHandler/);
   assert.match(actionCallId(read), /^child:/);
@@ -94,7 +94,7 @@ test("joins early child activity after paging in its edge and keeps the failed p
   ]);
   const [child] = visibleTrajectoryRows(projection.snapshot().rows, "failures");
   const [nested] = visibleTrajectoryRows(child.rows, "failures");
-  assert.equal(nested.state, "Captura incompleta");
+  assert.equal(nested.state, "incomplete");
   assert.equal(nested.rows[0].failed, true);
   const links = child.rows.filter((row) => row.command).map(actionCallId);
   assert.equal(new Set([...links, actionCallId(nested.rows[0])]).size, 3);

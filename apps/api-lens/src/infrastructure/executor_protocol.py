@@ -13,11 +13,14 @@ class WorkspaceSelection(BaseModel):
     path: str
 
 
-class ExecutorRequest(BaseModel):
+class WorkspaceCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    workspace: str
+
+
+class ExecutorRequest(WorkspaceCheck):
     prompt: str
     thread_id: UUID | None = None
-    workspace: str
 
     @field_validator("prompt")
     @classmethod

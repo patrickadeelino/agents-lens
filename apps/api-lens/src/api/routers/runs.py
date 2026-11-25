@@ -125,6 +125,15 @@ def accepted_run(run: PromptCapture) -> StreamingResponse:
     return response
 
 
+@router.get("/ready", status_code=204)
+def readiness() -> Response:
+    try:
+        ExecutorClient(executor_socket()).check_ready()
+    except (HTTPException, httpx.HTTPError) as error:
+        raise HTTPException(status_code=503, detail="Executor indisponível. Inicie o executor no host.") from error
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
 @router.post("/workspace-picker", response_model=WorkspaceSelection)
 def select_workspace(x_agent_lens: Annotated[Literal["workspace-picker"], Header()]) -> WorkspaceSelection | Response:
     try:

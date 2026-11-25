@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from "vue";
 import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSummary, isEssential, visibleTrajectoryRows } from "./eventPresentation.js";
 import { actionCallId, flattenTrajectory, observedFileChanges } from "./trajectoryProjection.js";
+import { CONNECTION, connectionLabel } from "./connectionState.js";
 import TrajectoryList from "./TrajectoryList.vue";
 
 const props = defineProps({
@@ -94,7 +95,7 @@ const expanded = computed(() => {
 });
 const duration = computed(() => {
   if (props.summary) return formatDuration(props.summary.total_duration_ns ?? props.summary.observed_duration_ns);
-  const liveElapsed = props.active && lastArrival.value !== null && props.connection === "Ao vivo"
+  const liveElapsed = props.active && lastArrival.value !== null && props.connection === CONNECTION.receiving
     ? Math.max(0, now.value - lastArrival.value) : 0;
   return data.value.lastOffset > data.value.firstOffset
     ? observedRunDuration(data.value.firstOffset, data.value.lastOffset, liveElapsed) : null;
@@ -113,7 +114,7 @@ function indexLabel(entry) {
     entry.title || entry.commandText || entry.tool?.name].join(" / ");
 }
 
-watch(() => props.active && props.connection === "Ao vivo", (active, _, onCleanup) => {
+watch(() => props.active && props.connection === CONNECTION.receiving, (active, _, onCleanup) => {
   if (!active) return;
   const timer = setInterval(() => { now.value = performance.now(); }, 250);
   onCleanup(() => clearInterval(timer));
@@ -276,13 +277,13 @@ onUnmounted(() => {
     <div v-if="switchToActive" class="active-context">
       <div>
         <p><span class="turn-state-dot" aria-hidden="true"></span> Turno {{ activeTurnNumber }} em andamento</p>
-        <p v-if="activeConnection === 'Reconectando…' || activeConnection === 'Interrompida'" class="quiet-text" role="status">
-          {{ activeConnection === 'Reconectando…' ? "Reconectando ao turno ativo…" : "Conexão com o turno ativo interrompida." }}
+        <p v-if="activeConnection === CONNECTION.reconnecting || activeConnection === CONNECTION.interrupted" class="quiet-text" role="status">
+          {{ activeConnection === CONNECTION.reconnecting ? "Reconectando ao turno ativo…" : "Conexão com o turno ativo interrompida." }}
         </p>
       </div>
       <div class="active-context-actions">
         <button type="button" class="secondary compact-button" @click="$emit('active-turn')">Ir ao turno {{ activeTurnNumber }}</button>
-        <button v-if="activeConnection === 'Interrompida'" type="button" class="secondary compact-button" @click="$emit('retry')">Tentar agora</button>
+        <button v-if="activeConnection === CONNECTION.interrupted" type="button" class="secondary compact-button" @click="$emit('retry')">Tentar agora</button>
       </div>
     </div>
 
@@ -300,17 +301,17 @@ onUnmounted(() => {
             @click="promptExpanded = !promptExpanded"></button>
           <p :id="promptId" class="trajectory-prompt">{{ promptExpanded ? prompt : promptPreview ?? prompt }}</p>
         </div>
-        <div v-if="connection === 'Reconectando…' || connection === 'Interrompida'" class="connection-notice">
+        <div v-if="connection === CONNECTION.reconnecting || connection === CONNECTION.interrupted" class="connection-notice">
           <p role="status">
-            {{ connection === 'Reconectando…' ? 'Conexão perdida. Tentando reconectar.' : 'Fluxo interrompido. Os eventos exibidos permanecem disponíveis.' }}
-            <span v-if="lastUpdateSeconds != null && connection === 'Reconectando…'"> Última atualização há {{ lastUpdateSeconds }} s.</span>
+            {{ connection === CONNECTION.reconnecting ? 'Conexão perdida. Tentando reconectar.' : 'Fluxo interrompido. Os eventos exibidos permanecem disponíveis.' }}
+            <span v-if="lastUpdateSeconds != null && connection === CONNECTION.reconnecting"> Última atualização há {{ lastUpdateSeconds }} s.</span>
           </p>
           <button v-if="runId" type="button" class="secondary" @click="$emit('retry')">Tentar agora</button>
         </div>
         <p v-else-if="recovered != null" class="quiet-text" role="status">Reconectado · {{ recovered }} {{ recovered === 1 ? "evento recebido" : "eventos recebidos" }}</p>
         <div class="trajectory-metric-summary">
           <dl class="trajectory-metrics">
-            <div v-if="status"><dt>{{ active && connection ? connection : "Estado do turno" }}</dt><dd>{{ status }}</dd></div>
+            <div v-if="status"><dt>{{ active && connection ? connectionLabel(connection) : "Estado do turno" }}</dt><dd>{{ status }}</dd></div>
             <div v-if="duration"><dt>{{ durationLabel }}</dt><dd>{{ duration }}</dd></div>
             <div v-if="hasObservedActions">
               <dt>{{ partial ? "Trecho carregado" : active ? "Observadas até agora" : "Observadas" }}</dt>
