@@ -2,11 +2,13 @@
 
 import argparse
 import asyncio
+import json
 import shutil
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import aclosing, suppress
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import uvicorn
 from fastapi import HTTPException
@@ -15,6 +17,11 @@ from opentelemetry.trace import Span
 
 from src.api.observability import observed_app
 from src.api.sse import ClosingStreamingResponse
+from src.infrastructure.app_server import (
+    AppServerError,
+    AppServerRejected,
+    AppServerTurn,
+)
 from src.infrastructure.catalog_run import CatalogRun
 from src.infrastructure.executor_protocol import (
     SESSION_PERSISTENCE_HEADER,
@@ -57,30 +64,20 @@ async def stream_process(run: CatalogRun, request: ExecutorRequest) -> AsyncGene
                         first_event_sent = True
 
 
-async def send_prompt(stdin: asyncio.StreamWriter, prompt: str) -> None:
-    try:
-        with suppress(BrokenPipeError, ConnectionResetError):
-            stdin.write(prompt.encode("utf-8"))
-            await stdin.drain()
-    finally:
-        stdin.close()
-
-
-async def stdout_lines(stdout: asyncio.StreamReader) -> AsyncIterator[bytes]:
-    while True:
-        try:
-            line = await stdout.readuntil(b"\n")
-        except asyncio.IncompleteReadError as error:
-            if error.partial:
-                yield error.partial
-            return
-        yield line
-
-
 async def stop_process(process: asyncio.subprocess.Process, stdout: asyncio.StreamReader) -> None:
+    try:
+        async with asyncio.timeout(2):
+            await drain_process(process, stdout)
+        return
+    except TimeoutError:
+        pass
     if process.returncode is None:
         with suppress(ProcessLookupError):
             process.kill()
+    await drain_process(process, stdout)
+
+
+async def drain_process(process: asyncio.subprocess.Process, stdout: asyncio.StreamReader) -> None:
     # Drain the paused pipe before waiting for its transport to close.
     while await stdout.read(64 * 1024):
         pass
@@ -90,12 +87,22 @@ async def stop_process(process: asyncio.subprocess.Process, stdout: asyncio.Stre
 async def subprocess_messages(
     run: CatalogRun, request: ExecutorRequest, span: Span,
 ) -> AsyncGenerator[RunOutput | RunExit | RunError]:
+    # Codex's sandbox helper requires a short, user-owned socket directory with mode 0700.
+    with TemporaryDirectory(prefix="lens-codex-", dir="/tmp") as runtime_dir:
+        async with aclosing(app_server_messages(run, request, span, runtime_dir)) as messages:
+            async for message in messages:
+                yield message
+
+
+async def app_server_messages(
+    run: CatalogRun, request: ExecutorRequest, span: Span, runtime_dir: str,
+) -> AsyncGenerator[RunOutput | RunExit | RunError]:
     progress = EventProgress("executor.subprocess.first_event_read", "subprocess")
     try:
         process = await asyncio.create_subprocess_exec(
-            *run.command(request.thread_id),
+            *run.command(),
             cwd=run.workspace,
-            env=run.environment(),
+            env={**run.environment(), "TMPDIR": runtime_dir, "XDG_RUNTIME_DIR": runtime_dir},
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -112,14 +119,14 @@ async def subprocess_messages(
 
     assert process.stdout is not None and process.stdin is not None
     event_log("executor.subprocess.started", "subprocess", "started")
-    delivery = asyncio.create_task(send_prompt(process.stdin, request.prompt))
+    turn = AppServerTurn(process.stdin, process.stdout)
+    secret = json.dumps(run.api_key)[1:-1]
     try:
-        async for line in stdout_lines(process.stdout):
+        async for event in turn.events(run, request):
             progress.advance(span)
-            stdout = line.decode("utf-8").replace(run.api_key, "[REDACTED]")
+            stdout = json.dumps(event, ensure_ascii=False).replace(secret, "[REDACTED]")
             yield RunOutput(stdout=stdout)
-        await delivery
-        exit_code = await process.wait()
+        exit_code = turn.exit_code
         outcome, code = exit_outcome(exit_code)
         finish_span(span, outcome, error_code=code)
         event_log(
@@ -127,19 +134,20 @@ async def subprocess_messages(
             error_code=code, started_at=progress.started_at, exit_code=exit_code, event_count=progress.count,
         )
         yield RunExit(exit_code=exit_code)
-        return
     except asyncio.LimitOverrunError:
         finish_span(span, "failed", error_code="event_too_large")
-        event_log(
-            "executor.subprocess.failed", "subprocess", "failed",
-            error_code="event_too_large", started_at=progress.started_at, event_count=progress.count,
-        )
+        yield RunError(error="event_too_large")
+    except AppServerRejected:
+        finish_span(span, "failed", error_code="app_server_request_rejected")
+        event_log("executor.subprocess.failed", "subprocess", "failed", error_code="app_server_request_rejected")
+        yield RunExit(exit_code=1)
+    except (AppServerError, OSError, EOFError, TimeoutError, ValueError, KeyError, TypeError, AttributeError):
+        finish_span(span, "failed", error_code="app_server_disconnected")
+        event_log("executor.subprocess.failed", "subprocess", "failed", error_code="app_server_disconnected")
+        yield RunExit(exit_code=None)
     finally:
-        delivery.cancel()
-        if not process.stdout.at_eof() or process.returncode is None:
-            await asyncio.shield(stop_process(process, process.stdout))
-
-    yield RunError(error="event_too_large")
+        process.stdin.close()
+        await asyncio.shield(stop_process(process, process.stdout))
 
 
 @app.post("/run", response_class=StreamingResponse)

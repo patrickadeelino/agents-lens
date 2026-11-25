@@ -43,16 +43,94 @@ import time
 from pathlib import Path
 
 thread_id = "c47f8d99-9af1-4219-bc65-a55a27096cb8"
-resuming = sys.argv[1:3] == ["exec", "resume"]
-assert sys.argv[-3:] == ["--", thread_id, "-"] if resuming else sys.argv[-2:] == ["--", "-"]
-assert "--ephemeral" not in sys.argv
-assert "--json" in sys.argv
+assert sys.argv[1:4] == ["app-server", "--listen", "stdio://"]
 assert 'default_permissions="agent-lens-catalog"' in sys.argv
 filesystem = next(arg for arg in sys.argv if arg.startswith('permissions.agent-lens-catalog.filesystem='))
 assert json.dumps(str(Path.cwd())) + ' = "write"' in filesystem
 assert 'permissions.agent-lens-catalog.network.enabled=false' in sys.argv
 assert 'shell_environment_policy.inherit="none"' in sys.argv
-prompt = sys.stdin.buffer.read().decode("utf-8")
+
+
+def request(method):
+    msg = json.loads(sys.stdin.readline())
+    assert msg["method"] == method
+    return msg
+
+
+def reply(msg, result):
+    print(json.dumps({"id": msg["id"], "result": result}), flush=True)
+
+
+def notify(method, **params):
+    print(json.dumps({"method": method, "params": params}), flush=True)
+
+
+reply(request("initialize"), {})
+request("initialized")
+login = request("account/login/start")
+assert login["params"]["type"] == "apiKey"
+assert 'cli_auth_credentials_store="ephemeral"' in sys.argv
+api_key = login["params"]["apiKey"]
+assert api_key == "not-a-real-key"
+assert not {"CODEX_API_KEY", "OPENAI_API_KEY"} & os.environ.keys()
+reply(login, {"type": "apiKey"})
+opening = json.loads(sys.stdin.readline())
+resuming = opening["method"] == "thread/resume"
+assert opening["method"] in {"thread/start", "thread/resume"}
+assert opening["params"]["permissions"] == "agent-lens-catalog"
+assert opening["params"]["approvalPolicy"] == "never"
+assert opening["params"]["cwd"] == str(Path.cwd())
+if resuming:
+    assert opening["params"]["threadId"] == thread_id
+    assert opening["params"]["excludeTurns"]
+    opening_state = Path(os.environ["CODEX_HOME"])
+    if (opening_state / "reject-resume").exists():
+        with (opening_state / "resume-attempts").open("a") as attempts:
+            print("reject the continuation", file=attempts)
+        print(json.dumps({"id": opening["id"], "error": {"code": -32600}}), flush=True)
+        raise SystemExit(1)
+if not resuming:
+    counter = Path(os.environ["CODEX_HOME"]) / "thread-started"
+    if counter.exists():
+        thread_id = "55555555-5555-4555-8555-555555555555"
+    counter.touch()
+reply(opening, {
+    "thread": {"id": thread_id}, "cwd": str(Path.cwd()), "approvalPolicy": "never",
+    "activePermissionProfile": {"id": "agent-lens-catalog"},
+})
+turn = request("turn/start")
+assert turn["params"]["threadId"] == thread_id
+prompt = turn["params"]["input"][0]["text"]
+reply(turn, {"turn": {"id": "current-turn"}})
+
+
+def emit(raw, *, flush):
+    event = json.loads(raw)
+    kind = event.pop("type")
+    ids = {"threadId": thread_id, "turnId": "current-turn"}
+    if kind == "turn.started":
+        notify("turn/started", **ids, turn={"id": "current-turn"})
+    elif kind in {"turn.completed", "turn.failed"}:
+        status = "completed" if kind == "turn.completed" else "failed"
+        notify("turn/completed", **ids, turn={"id": "current-turn", "status": status})
+    elif kind.startswith("item."):
+        def camel(key):
+            first, *parts = key.split("_")
+            return first + "".join(part.title() for part in parts)
+        item = event["item"]
+        fields = {camel(key): value for key, value in item.items()}
+        fields["type"] = camel(item["type"])
+        if fields.get("status") == "in_progress":
+            fields["status"] = "inProgress"
+        notify(kind.replace(".", "/"), **ids, item=fields)
+    elif kind == "error":
+        notify("error", **ids, error={"message": event["message"]}, willRetry=False)
+    elif kind == "future.event":
+        notify("item/completed", **ids, item={
+            "type": "agentMessage", "id": f'item_{event["sequence"]}', "text": str(event["sequence"]),
+        })
+
+
 state = Path(os.environ["CODEX_HOME"])
 marker_file = state / "session-marker"
 if prompt in ("catalog first", "catalog second"):
@@ -62,13 +140,13 @@ if prompt in ("catalog first", "catalog second"):
     else:
         assert target.read_text() == "category filtering\\n"
         target.write_text(target.read_text() + "pagination\\n")
-    print(json.dumps({"type": "thread.started", "thread_id": thread_id}), flush=True)
-    print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Edit recorded"}}), flush=True)
-    print('{"type":"turn.completed"}', flush=True)
+    emit(json.dumps({"type": "thread.started", "thread_id": thread_id}), flush=True)
+    emit(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Edit recorded"}}), flush=True)
+    emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
 if prompt == "independent conversation":
-    print(json.dumps({"type": "thread.started", "thread_id": "55555555-5555-4555-8555-555555555555"}), flush=True)
-    print('{"type":"turn.completed"}', flush=True)
+    emit(json.dumps({"type": "thread.started", "thread_id": "55555555-5555-4555-8555-555555555555"}), flush=True)
+    emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
 if prompt == "save marker: niobium":
     assert not resuming
@@ -80,37 +158,49 @@ if prompt in ("recall the marker", "reject the continuation"):
     if prompt == "reject the continuation":
         raise SystemExit(7)
 if prompt in ("save marker: niobium", "recall the marker"):
-    print(json.dumps({"type": "thread.started", "thread_id": thread_id}), flush=True)
-    print('{"type":"turn.started"}', flush=True)
+    emit(json.dumps({"type": "thread.started", "thread_id": thread_id}), flush=True)
+    emit('{"type":"turn.started"}', flush=True)
     if resuming:
-        print(json.dumps({"type": "item.completed", "item": {
+        for total, last in (
+            ({"inputTokens": 110, "cachedInputTokens": 33, "outputTokens": 22},
+             {"inputTokens": 10, "cachedInputTokens": 3, "outputTokens": 2}),
+            ({"inputTokens": 125, "cachedInputTokens": 37, "outputTokens": 25},
+             {"inputTokens": 15, "cachedInputTokens": 4, "outputTokens": 3}),
+        ):
+            notify("thread/tokenUsage/updated", threadId=thread_id, turnId="current-turn",
+                   tokenUsage={"total": total, "last": last})
+        emit(json.dumps({"type": "item.completed", "item": {
             "type": "agent_message", "text": marker_file.read_text(),
         }}), flush=True)
-    print('{"type":"turn.completed"}', flush=True)
+    emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
 if prompt == "report command outcome":
     time.sleep(1)
-print(json.dumps({"type": "turn.started", "prompt": prompt, "cwd": str(Path.cwd())}), flush=True)
+emit(json.dumps({"type": "turn.started", "prompt": prompt, "cwd": str(Path.cwd())}), flush=True)
 if prompt == "report a diagnostic":
-    print(json.dumps({"type": "error", "message": os.environ["CODEX_API_KEY"]}), flush=True)
-    raise SystemExit(7)
+    emit(json.dumps({"type": "error", "message": api_key}), flush=True)
+    emit('{"type":"turn.failed"}', flush=True)
+    raise SystemExit(0)
 if prompt == "emit a big record":
-    print(json.dumps({"type": "item.completed", "item": {
+    emit(json.dumps({"type": "item.completed", "item": {
         "id": "item_1", "type": "agent_message", "text": "x" * (128 * 1024),
     }}), flush=True)
-    print('{"type":"turn.completed"}', flush=True)
+    emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
 if prompt == "report command outcome":
-    print(json.dumps({"type": "item.completed", "item": {
+    emit(json.dumps({"type": "item.completed", "item": {
         "type": "command_execution", "status": "failed", "exit_code": 127,
         "command": "private-fake-command", "aggregated_output": "private-fake-stdout",
     }}), flush=True)
-    print('{"type":"private-fake-event"}', flush=True)
-    print('{"type":"turn.completed"}', flush=True)
+    notify("thread/tokenUsage/updated", threadId=thread_id, turnId="current-turn",
+           tokenUsage={"total": {"inputTokens": 12, "cachedInputTokens": 4, "outputTokens": 3}})
+    notify("item/completed", threadId="another-thread", turnId="another-turn",
+           item={"type": "agentMessage", "id": "child-item", "text": "private-fake-event"})
+    emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
 if prompt == "measure command spans":
     def command(event_type, item_id, status, exit_code=None):
-        print(json.dumps({"type": event_type, "item": {
+        emit(json.dumps({"type": event_type, "item": {
             "type": "command_execution", "id": item_id, "status": status, "exit_code": exit_code,
             "command": "private-command-text", "aggregated_output": "private-command-output",
         }}), flush=True)
@@ -124,7 +214,7 @@ if prompt == "measure command spans":
     command("item.started", "item_4", "in_progress")
     command("item.started", "private-invalid-id", "in_progress")
     command("item.completed", "private-invalid-id", "completed", 0)
-    print('{"type":"turn.completed"}', flush=True)
+    emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
 if prompt == "exit 7":
     raise SystemExit(7)
@@ -137,21 +227,24 @@ if prompt == "stream across reconnect":
                 raise SystemExit(8)
             time.sleep(0.01)
 
-    for sequence in range(2, 34):
-        print(json.dumps({"type": "future.event", "sequence": sequence}), flush=True)
+    for sequence in range(3, 34):
+        emit(json.dumps({"type": "future.event", "sequence": sequence}), flush=True)
     wait_for("emit-34")
-    print(json.dumps({"type": "future.event", "sequence": 34}), flush=True)
+    emit(json.dumps({"type": "future.event", "sequence": 34}), flush=True)
     wait_for("emit-35")
-    print(json.dumps({"type": "turn.completed", "sequence": 35}), flush=True)
+    emit(json.dumps({"type": "future.event", "sequence": 35}), flush=True)
     wait_for("finish-run")
+    emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
+if prompt.startswith("  --help"):
+    assert prompt == '  --help\\nLeia o README "juniper" ☕.\\n'
 release = Path(os.environ["CODEX_HOME"]) / "release"
 deadline = time.monotonic() + 5
 while not release.exists():
     if time.monotonic() >= deadline:
         raise SystemExit(8)
     time.sleep(0.01)
-print('{"type":"turn.completed"}', flush=True)
+emit('{"type":"turn.completed"}', flush=True)
 """
 
 
@@ -270,7 +363,7 @@ def test_run_stream_bridges_history_and_live_capture(
 
     trace = directory / "events.timed.jsonl"
     deadline = monotonic() + 3
-    while b'"sequence": 34' not in trace.read_bytes():
+    while b'"text": "34"' not in trace.read_bytes():
         if monotonic() >= deadline:
             pytest.fail("Event 34 was not saved before connecting")
         sleep(0.01)
@@ -281,20 +374,26 @@ def test_run_stream_bridges_history_and_live_capture(
         frames = response.iter_lines()
         assert next(frames) == "id: 34"
         kind, record = next_frame(frames)
-        assert (kind, record["event"]) == ("record", {"type": "future.event", "sequence": 34})
+        assert (kind, record["event"]) == ("record", {
+            "type": "item.completed", "item": {"type": "agent_message", "id": "item_34", "text": "34"},
+        })
 
         (run_workspace / "emit-35").touch()
         assert next(frames) == "id: 35"
         kind, record = next_frame(frames)
-        assert (kind, record["event"]) == ("record", {"type": "turn.completed", "sequence": 35})
+        assert (kind, record["event"]) == ("record", {
+            "type": "item.completed", "item": {"type": "agent_message", "id": "item_35", "text": "35"},
+        })
         assert not (directory / "result.json").exists()
 
         (run_workspace / "finish-run").touch()
+        assert next(frames) == "id: 36"
+        assert next_frame(frames)[1]["event"] == {"type": "turn.completed"}
         assert next_frame(frames) == ("end", {"exit_code": 0})
         assert list(frames) == []
 
     assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] == 0
-    assert len(trace.read_text(encoding="utf-8").splitlines()) == 35
+    assert len(trace.read_text(encoding="utf-8").splitlines()) == 36
     assert capture_directory(run_workspace) == directory
 
 
@@ -320,6 +419,8 @@ def test_latest_run_resumes_the_thread_once_and_links_survive_api_restart(run_wo
         assert second_id != first_id
         assert thread_id in accepted.text
         assert "niobium" in accepted.text
+        records = [json.loads(line[6:]) for line in accepted.text.splitlines() if line.startswith("data: ")]
+        assert records[-2]["event"]["usage"] == {"input_tokens": 25, "cached_input_tokens": 7, "output_tokens": 5}
         assert (run_workspace / "resume-attempts").read_text().splitlines() == ["recall the marker"]
         assert len(list((run_workspace / "captures").iterdir())) == 2
         first_session = CaptureFiles.find(run_workspace / "captures", first_id).read_session()
@@ -392,6 +493,7 @@ def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
 
     first = backend.post("/runs", json={"prompt": "save marker: niobium"})
     first_id = first.headers["X-Run-ID"]
+    (run_workspace / "reject-resume").touch()
     failed = backend.post(f"/runs/{first_id}/continue", json={"prompt": "reject the continuation"})
     assert failed.status_code == 200
     failed_id = failed.headers["X-Run-ID"]
@@ -467,12 +569,12 @@ def test_run_streams_saved_records_before_exit_and_rejects_a_concurrent_run(
         assert response.headers["content-type"].split(";")[0] == "text/event-stream"
         frames = response.iter_lines()
         name, first = next_frame(frames)
-        assert (name, first["event"]) == ("record", {
-            "type": "turn.started", "prompt": LITERAL_PROMPT, "cwd": str(run_config.workspace),
-        })
+        assert (name, TimedEvent.model_validate(first).event.type) == ("record", "thread.started")
+        _, started = next_frame(frames)
+        assert started["event"] == {"type": "turn.started"}
         directory = capture_directory(run_workspace)
         trace = directory / "events.timed.jsonl"
-        assert json.loads(trace.read_text(encoding="utf-8")) == first
+        assert [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()] == [first, started]
         assert not (directory / "result.json").exists()
 
         transport = httpx.HTTPTransport(uds=str(executor_socket))
@@ -485,7 +587,7 @@ def test_run_streams_saved_records_before_exit_and_rejects_a_concurrent_run(
         assert next_frame(frames) == ("end", {"exit_code": 0})
         assert list(frames) == []
 
-    assert [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()] == [first, second]
+    assert [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()] == [first, started, second]
     assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] == 0
 
 
@@ -503,7 +605,7 @@ def test_run_reports_subprocess_startup_failure(
 
 
 @pytest.mark.usefixtures("executor_socket")
-def test_run_preserves_records_and_reports_nonzero_exit(
+def test_run_preserves_records_when_app_server_exits_before_turn_completion(
     live_http: tuple[httpx.Client, Event], run_workspace: Path,
 ) -> None:
     backend, _ = live_http
@@ -512,12 +614,14 @@ def test_run_preserves_records_and_reports_nonzero_exit(
         frames = response.iter_lines()
         kind, record = next_frame(frames)
         assert kind == "record"
-        assert next_frame(frames) == ("end", {"exit_code": 7})
+        assert next_frame(frames)[1]["event"] == {"type": "turn.started"}
+        assert next_frame(frames) == ("end", {"exit_code": None, "error": "execution_failed"})
         assert list(frames) == []
 
     directory = capture_directory(run_workspace)
-    assert json.loads((directory / "events.timed.jsonl").read_text(encoding="utf-8")) == record
-    assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] == 7
+    trace = (directory / "events.timed.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(trace[0]) == record
+    assert json.loads((directory / "result.json").read_text(encoding="utf-8"))["exit_code"] is None
 
 
 @pytest.mark.usefixtures("executor_socket")
@@ -540,6 +644,7 @@ def test_run_finishes_capture_after_the_client_disconnects(
         frames = response.iter_lines()
         kind, first = next_frame(frames)
         assert kind == "record"
+        assert next_frame(frames)[1]["event"] == {"type": "turn.started"}
         assert not request_finished.is_set()
 
     assert request_finished.wait(timeout=3), "The server did not finish the disconnected request"
@@ -559,11 +664,11 @@ def test_run_finishes_capture_after_the_client_disconnects(
     trace = directory / "events.timed.jsonl"
     records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
     assert records[0] == first
-    assert records[1]["event"] == {"type": "turn.completed"}
+    assert records[2]["event"] == {"type": "turn.completed"}
 
     # Round-trip through the same event loop after the worker finished publishing.
     assert backend.get("/openapi.json").status_code == 200
-    assert len(enqueued) == 1
+    assert len(enqueued) == 2
     queued_record = enqueued[0]
     assert queued_record is not None
     assert queued_record.record.model_dump() == first
@@ -572,7 +677,7 @@ def test_run_finishes_capture_after_the_client_disconnects(
     assert (spans["run.capture"].attributes or {})["agent_lens.outcome"] == "completed"
     sse_attributes = spans["run.sse"].attributes or {}
     assert sse_attributes["agent_lens.outcome"] == "disconnected"
-    assert sse_attributes["agent_lens.sse.records_sent"] == 1
+    assert sse_attributes["agent_lens.sse.records_sent"] == 2
     assert [event.name for event in spans["run.sse"].events] == ["run.sse.first_record_sent"]
     sse_end = spans["run.sse"].end_time
     write_start = spans["capture.write_result"].start_time
@@ -606,8 +711,8 @@ def assert_correlated_capture_logs(log_exporter: InMemoryLogRecordExporter, run_
     assert len({logs[event].trace_id for event in events}) == 1
     assert all((logs[event].attributes or {})["run_id"] == run_id for event in events)
     sent = [item for item in log_exporter.get_finished_logs() if item.log_record.body == "run.sse.record_sent"]
-    assert [(item.log_record.attributes or {})["event_count"] for item in sent] == [1]
-    assert (logs["run.capture.completed"].attributes or {})["event_count"] == 2
+    assert [(item.log_record.attributes or {})["event_count"] for item in sent] == [1, 2]
+    assert (logs["run.capture.completed"].attributes or {})["event_count"] == 3
     assert "run.sse.end_sent" not in logs
     assert str(run_workspace) not in str(logs)
     assert "Read the example." not in str(logs)
@@ -696,15 +801,17 @@ def test_executor_redacts_its_key_before_broadcast_and_persistence(
     assert run_config.api_key not in response.text
     frames = iter(response.text.splitlines())
     assert next_frame(frames)[0] == "record"
+    assert next_frame(frames)[0] == "record"
     kind, diagnostic = next_frame(frames)
     assert (kind, diagnostic["event"]) == ("record", {"type": "error", "message": "[REDACTED]"})
-    assert next_frame(frames) == ("end", {"exit_code": 7})
+    assert TimedEvent.model_validate(next_frame(frames)[1]).event.type == "turn.failed"
+    assert next_frame(frames) == ("end", {"exit_code": 1})
     assert list(frames) == []
 
     trace = capture_directory(run_workspace) / "events.timed.jsonl"
     text = trace.read_text(encoding="utf-8")
     assert run_config.api_key not in text
-    assert json.loads(text.splitlines()[-1]) == diagnostic
+    assert json.loads(text.splitlines()[-2]) == diagnostic
 
 
 @pytest.mark.usefixtures("executor_socket")
@@ -719,7 +826,7 @@ def test_run_streams_large_event_intact(
         assert response.status_code == 200
         frames = response.iter_lines()
         records = []
-        for expected_type in ("turn.started", "item.completed", "turn.completed"):
+        for expected_type in ("thread.started", "turn.started", "item.completed", "turn.completed"):
             kind, record = next_frame(frames)
             assert kind == "record"
             assert TimedEvent.model_validate(record).event.type == expected_type
@@ -727,7 +834,7 @@ def test_run_streams_large_event_intact(
         assert next_frame(frames) == ("end", {"exit_code": 0})
         assert list(frames) == []
 
-    assert records[1]["event"] == {
+    assert records[2]["event"] == {
         "type": "item.completed",
         "item": {"id": "item_1", "type": "agent_message", "text": "x" * (128 * 1024)},
     }
@@ -759,13 +866,13 @@ def assert_live_log_milestones(logs: Sequence[Mapping[str, object]], run_id: str
     assert len({log["trace_id"] for log in logs}) == 1
     by_event = {log["event"]: log for log in logs}
     assert all(isinstance(by_event[name]["duration_ms"], int) for name in milestones[1:])
-    assert by_event["executor.subprocess.completed"]["event_count"] == 3
-    assert by_event["run.capture.completed"]["event_count"] == 3
+    assert by_event["executor.subprocess.completed"]["event_count"] == 4
+    assert by_event["run.capture.completed"]["event_count"] == 4
 
     delivery = [log for log in logs if log["event"] in ("run.sse.record_sent", "run.sse.end_sent")]
     assert [(log["event"], log["event_count"]) for log in delivery] == [
         ("run.sse.record_sent", 1), ("run.sse.record_sent", 2), ("run.sse.record_sent", 3),
-        ("run.sse.end_sent", 3),
+        ("run.sse.record_sent", 4), ("run.sse.end_sent", 4),
     ]
     assert by_event["run.sse.end_sent"]["exit_code"] == 0
 
@@ -780,6 +887,9 @@ def test_run_logs_safe_command_metadata_for_a_failed_command_in_a_completed_turn
     response = backend.post("/runs", json={"prompt": "report command outcome"})
     assert response.status_code == 200
     assert "private-fake-command" in response.text
+    assert "private-fake-event" not in response.text
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert events[-2]["event"]["usage"] == {"input_tokens": 12, "cached_input_tokens": 4, "output_tokens": 3}
     assert request_finished.wait(3)
 
     span_exporter, log_exporter = telemetry_exports
@@ -791,8 +901,8 @@ def test_run_logs_safe_command_metadata_for_a_failed_command_in_a_completed_turn
     exported = [item.log_record.attributes or {} for item in log_exporter.get_finished_logs()]
     for logs in (exported, [json.loads(line) for line in stderr.splitlines()]):
         records = [log for log in logs if log["event"] == "run.sse.record_sent"]
-        assert [log["event_type"] for log in records] == ["turn.started", "item.completed", "other", "turn.completed"]
-        command = records[1]
+        assert [log["event_type"] for log in records] == ["thread.started", "turn.started", "item.completed", "turn.completed"]
+        command = records[2]
         assert command["item_type"] == "command_execution"
         assert command["command_status"] == "failed"
         assert command["command_exit_code"] == 127
@@ -813,7 +923,7 @@ def assert_successful_stream_spans(spans: dict[str, ReadableSpan]) -> None:
     ]
     first_read, first_sent = subprocess_span.events
     assert subprocess_span.start_time is not None
-    assert first_read.timestamp - subprocess_span.start_time >= 900_000_000
+    assert first_read.timestamp >= subprocess_span.start_time
     assert first_read.timestamp <= first_sent.timestamp
 
     request_events = spans["executor.request"].events
@@ -931,6 +1041,7 @@ def test_run_preserves_trace_when_a_line_exceeds_the_limit(
     with backend.stream("POST", "/runs", json={"prompt": "emit a big record"}) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
+        _, thread = next_frame(frames)
         kind, record = next_frame(frames)
         assert (kind, TimedEvent.model_validate(record).event.type) == ("record", "turn.started")
         assert next_frame(frames) == ("end", {"exit_code": None, "error": "event_too_large"})
@@ -938,7 +1049,7 @@ def test_run_preserves_trace_when_a_line_exceeds_the_limit(
 
     directory = capture_directory(run_workspace)
     trace = (directory / "events.timed.jsonl").read_text(encoding="utf-8")
-    assert [json.loads(line) for line in trace.splitlines()] == [record]
+    assert [json.loads(line) for line in trace.splitlines()] == [thread, record]
     assert json.loads((directory / "result.json").read_text())["exit_code"] is None
 
 

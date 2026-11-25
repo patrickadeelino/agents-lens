@@ -312,7 +312,7 @@ class ObservedCommandSpans:
         if not isinstance(item, dict) or item.get("type") != "command_execution":
             return
         item_id = item.get("id")
-        if not isinstance(item_id, str) or fullmatch(r"item_[0-9]{1,20}", item_id) is None:
+        if not isinstance(item_id, str) or fullmatch(r"(?:item_[0-9]{1,20}|exec-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})", item_id) is None:
             return
         if item_id in self._completed:
             return

@@ -2,7 +2,7 @@
 
 The host executor seeds `.local/codex-executor/catalog/workspace` once from this directory and keeps later edits. Its private Codex state and socket are siblings at `.local/codex-executor/catalog/state` and `.local/codex-executor/catalog/ipc/executor.sock`. Use a dedicated Compose project so its capture volume remains separate from other Agent Lens instances. The web server is bound to loopback.
 
-From the repository root, start the executor in a terminal. Set `CATALOG_CODEX_BIN` to the native Codex binary and `CATALOG_MODEL` to the desired model. The credential is entered silently and sent on standard input; do not put it in a command argument or commit it.
+From the repository root, start the executor in a terminal. Set `CATALOG_CODEX_BIN` to a native Codex binary with App Server support (verified on 0.171.0) and `CATALOG_MODEL` to the desired model. The executor starts a stdio App Server for each submitted turn and reuses the private Codex state when resuming a thread. The credential is entered silently and sent on standard input; do not put it in a command argument or commit it.
 
 ```zsh
 read -rs 'CATALOG_KEY?Codex API key: '
