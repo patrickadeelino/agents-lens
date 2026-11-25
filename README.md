@@ -2,7 +2,7 @@
 
 Agent Lens is a local web interface for Codex App Server. Select a scratch directory, send a prompt, and follow the agent's messages, tool activity and subagents live. The browser can reconnect to a running turn, and saved conversations can continue in the same Codex thread.
 
-This is an independent-study adaptation of [Harvard CS2680 Assignment 1](https://cs2680.seas.harvard.edu/assignments/assignment1). The app reports elapsed time measured by the backend and token counts reported by Codex.
+The app reports elapsed time measured by the backend and token counts reported by Codex.
 
 ## Requirements
 
