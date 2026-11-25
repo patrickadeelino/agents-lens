@@ -594,7 +594,7 @@ def test_unavailable_workspace_does_not_reserve_a_continuation(
     try:
         rejected = backend.post(follow_up, json={"prompt": "recall the marker"})
         assert rejected.status_code == 422
-        assert "Restaure a pasta" in rejected.json()["detail"]
+        assert "Restore the folder" in rejected.json()["detail"]
         assert "X-Run-ID" not in rejected.headers
         detail = backend.get(f"/threads/by-run/{origin}").json()
         assert detail["continuation"]["state"] == "available"

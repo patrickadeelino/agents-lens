@@ -116,17 +116,17 @@ test("delegation numbers stay stable across pages and label only observed wait t
     delivery(7, record({ type: "delegation.event", thread_id: "tests", source_thread_id: "root",
       turn_id: "turn", item_id: "state", observation: { type: "subagent.wait" } }, 7)),
     delivery(8, record({ type: "delegation.event", thread_id: "tests",
-      observation: { type: "subagent.completed", item: { agentPath: "/root/testes" } } }, 8)),
+      observation: { type: "subagent.completed", item: { agentPath: "/root/tests" } } }, 8)),
   ], {}, "root");
-  assert.equal(projection.snapshot().rows[0].label, "Subagente 2 · testes");
+  assert.equal(projection.snapshot().rows[0].label, "Subagent 2 · tests");
   projection.prepend([
     delivery(1, record({ type: "thread.started", thread_id: "root" }, 1)),
     delivery(2, record(edge("api", 1), 2)),
   ]);
   assert.deepEqual(projection.snapshot().rows.filter((row) => row.branch).map((row) => row.label), [
-    "Subagente 1", "Subagente 2 · testes",
+    "Subagent 1", "Subagent 2 · tests",
   ]);
   assert.deepEqual(projection.snapshot().actions.map((row) => row.tool.name), [
-    "Aguardar subagentes 1 e 2 · testes", "Aguardar atualização de subagente", "Aguardar subagente 2 · testes",
+    "Wait for subagents 1 and 2 · tests", "Wait for subagent update", "Wait for subagent 2 · tests",
   ]);
 });

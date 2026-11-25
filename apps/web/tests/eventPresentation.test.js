@@ -6,7 +6,7 @@ test("Essential folds only adjacent technical events and leaves failures inspect
   const rows = [
     { type: "thread.started" },
     { type: "item.completed", item: { type: "error", message: "CLI warning" } },
-    { type: "item.completed", item: { type: "agent_message", text: "Vou ler o README." } },
+    { type: "item.completed", item: { type: "agent_message", text: "I will read the README." } },
     { type: "turn.completed" },
     { type: "error", message: "Fatal stream error" },
     { type: "turn.failed", error: { message: "Turn failed" } },
@@ -34,37 +34,37 @@ test("shell display preserves literal quotes and unwraps only a single literal a
 test("path masking is limited to display and prefers a known workspace over the home alias", () => {
   const workspace = "/home/example/my project";
   const record = { path: workspace, command: `cat "${workspace}/README.md"`, home: "/Users/other/.codex/AGENTS.md" };
-  assert.equal(maskPaths(record.command, workspace), 'cat "<workspace>/README.md"');
+  assert.equal(maskPaths(record.command, workspace), 'cat "<folder>/README.md"');
   assert.equal(maskPaths("/home/example/my project-backup", workspace), "~/my project-backup");
   assert.deepEqual(JSON.parse(displayValue(record, workspace)), {
-    path: "<workspace>", command: 'cat "<workspace>/README.md"', home: "~/.codex/AGENTS.md",
+    path: "<folder>", command: 'cat "<folder>/README.md"', home: "~/.codex/AGENTS.md",
   });
   assert.equal(record.path, workspace);
-  assert.equal(maskPaths("cd /var/scratch", "/var/scratch/"), "cd <workspace>");
+  assert.equal(maskPaths("cd /var/scratch", "/var/scratch/"), "cd <folder>");
 });
 
 test("duration and relative start use the units in the approved screens", () => {
   assert.equal(formatDuration(700_000), "< 1 ms");
   assert.equal(formatDuration(200_900_000), "200 ms");
-  assert.equal(formatDuration(1_200_000_000), "1,2 s");
-  assert.equal(formatOffset(200_000_000), "+0,20 s");
+  assert.equal(formatDuration(1_200_000_000), "1.2 s");
+  assert.equal(formatOffset(200_000_000), "+0.20 s");
   assert.equal(formatDuration(undefined), null);
 });
 
 test("run duration uses capture offsets and can add time since the live arrival", () => {
-  assert.equal(observedRunDuration(8_000_000_000, 9_200_000_000), "1,2 s");
-  assert.equal(observedRunDuration(8_000_000_000, 9_200_000_000, 800), "2,0 s");
+  assert.equal(observedRunDuration(8_000_000_000, 9_200_000_000), "1.2 s");
+  assert.equal(observedRunDuration(8_000_000_000, 9_200_000_000, 800), "2.0 s");
   assert.equal(observedRunDuration(null, 9_200_000_000), null);
 });
 
 test("plain action titles preserve ambiguity for complex shell commands", () => {
-  assert.equal(commandTitle("cat README.md"), "Ler README.md");
-  assert.equal(commandTitle("zsh -lc 'cat examples/README.md'"), "Ler README.md");
-  assert.equal(commandTitle("ls -a"), "Listar arquivos");
-  assert.equal(commandTitle("rg -n 'setup' README.md"), "Buscar");
-  assert.equal(commandTitle("grep setup README.md"), "Buscar");
-  assert.equal(commandTitle("sed -n '1,10p' README.md"), "Ler trecho");
-  assert.equal(commandTitle('cat "<workspace>/my guide.md"'), "Ler my guide.md");
+  assert.equal(commandTitle("cat README.md"), "Read README.md");
+  assert.equal(commandTitle("zsh -lc 'cat examples/README.md'"), "Read README.md");
+  assert.equal(commandTitle("ls -a"), "List files");
+  assert.equal(commandTitle("rg -n 'setup' README.md"), "Search");
+  assert.equal(commandTitle("grep setup README.md"), "Search");
+  assert.equal(commandTitle("sed -n '1,10p' README.md"), "Read excerpt");
+  assert.equal(commandTitle('cat "<folder>/my guide.md"'), "Read my guide.md");
   assert.equal(commandTitle("cat README.md | grep setup"), null);
   assert.equal(commandTitle("cat $README"), null);
   assert.equal(commandTitle("cat -n README.md"), null);
@@ -83,7 +83,7 @@ test("omitted messages have no prose and startup commands stay outside Essential
   assert.equal(isStartupCommand("cat AGENTS.md", workspace), false);
   const rows = [{ key: "boot", startup: true }, { key: "message", ...omitted }];
   assert.deepEqual(trajectoryRows(rows, "essential"), rows.slice(1));
-  assert.equal(trajectoryRows(rows, "all")[0].groupTitle, "Inicialização e diagnósticos");
+  assert.equal(trajectoryRows(rows, "all")[0].groupTitle, "Startup and diagnostics");
 });
 
 test("failed commands preview the last useful line and prefer observed stderr", () => {

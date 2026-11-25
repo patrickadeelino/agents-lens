@@ -51,7 +51,7 @@ def get_prompt_capture(request: NewPromptRequest) -> PromptCapture:
     elif request.workspace_run_id is not None:
         workspace = saved_workspace(request.workspace_run_id)
     else:
-        raise HTTPException(status_code=422, detail="Selecione uma pasta para iniciar a conversa.")
+        raise HTTPException(status_code=422, detail="Select a folder to start the conversation.")
     output = create_capture(request.prompt, workspace=workspace)
     return prepare_capture(request.prompt, socket, output, workspace=workspace)
 
@@ -60,11 +60,11 @@ def saved_workspace(run_id: str) -> str:
     try:
         session = CaptureFiles.find(CAPTURE_ROOT, run_id).read_session()
     except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail="Conversa não encontrada.") from error
+        raise HTTPException(status_code=404, detail="Conversation was not found.") from error
     except (OSError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="Histórico indisponível.") from error
+        raise HTTPException(status_code=503, detail="History is unavailable.") from error
     if session is None or not session.workspace:
-        raise HTTPException(status_code=409, detail="Selecione a pasta para iniciar uma conversa.")
+        raise HTTPException(status_code=409, detail="Select the folder to start a new conversation.")
     return session.workspace
 
 
@@ -72,9 +72,9 @@ def selected_workspace(socket: str, selection_id: UUID) -> str:
     try:
         return ExecutorClient(socket).workspace(selection_id)
     except httpx.HTTPStatusError as error:
-        raise HTTPException(status_code=409, detail="Selecione a pasta novamente.") from error
+        raise HTTPException(status_code=409, detail="Select the folder again.") from error
     except (httpx.RequestError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="Executor indisponível.") from error
+        raise HTTPException(status_code=503, detail="Executor unavailable.") from error
 
 
 def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> PromptCapture:
@@ -82,7 +82,7 @@ def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> Promp
     socket = executor_socket()
     session = origin.read_session()
     if session is None or not session.workspace:
-        raise HTTPException(status_code=409, detail="Esta conversa não tem uma pasta registrada.")
+        raise HTTPException(status_code=409, detail="This conversation has no recorded folder.")
     workspace = session.workspace
     check_resume_workspace(socket, workspace)
     output = create_capture(request.prompt, previous_run_id=run_id, workspace=workspace)
@@ -103,11 +103,11 @@ def check_resume_workspace(socket: str, workspace: str) -> None:
     except httpx.HTTPStatusError as error:
         if error.response.status_code == 409:
             raise HTTPException(
-                status_code=422, detail="A pasta desta conversa está indisponível. Restaure a pasta e tente novamente.",
+                status_code=422, detail="This conversation's folder is unavailable. Restore the folder and try again.",
             ) from error
-        raise HTTPException(status_code=503, detail="Executor indisponível.") from error
+        raise HTTPException(status_code=503, detail="Executor unavailable.") from error
     except httpx.RequestError as error:
-        raise HTTPException(status_code=503, detail="Executor indisponível.") from error
+        raise HTTPException(status_code=503, detail="Executor unavailable.") from error
 
 
 def resumable_capture(run_id: str) -> tuple[CaptureFiles, UUID]:

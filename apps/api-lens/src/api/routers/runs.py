@@ -130,7 +130,7 @@ def readiness() -> Response:
     try:
         ExecutorClient(executor_socket()).check_ready()
     except (HTTPException, httpx.HTTPError) as error:
-        raise HTTPException(status_code=503, detail="Executor indisponível. Inicie o executor no host.") from error
+        raise HTTPException(status_code=503, detail="Executor unavailable. Start the executor on the host.") from error
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
@@ -142,7 +142,7 @@ def select_workspace(x_agent_lens: Annotated[Literal["workspace-picker"], Header
         detail = error.response.json().get("detail")
         raise HTTPException(status_code=error.response.status_code, detail=detail) from error
     except (httpx.RequestError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="Seletor de pastas indisponível.") from error
+        raise HTTPException(status_code=503, detail="Folder picker is unavailable.") from error
     return selection if selection else Response(status_code=204)
 
 

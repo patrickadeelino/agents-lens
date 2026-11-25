@@ -113,7 +113,7 @@ class Conversations:
         latest = turns[-1]
         continuation = describe_continuation(latest.run_id, chain[-1], chain[-1].read_result())
         return ThreadDetail(thread_id, turns[0].run_id, latest.run_id,
-                            preview(turns[0].prompt, 80) or "Conversa anterior",
+                            preview(turns[0].prompt, 80) or "Earlier conversation",
                             preview(latest.prompt or latest.assistant_markdown, 140), max(dates, default=None),
                             latest.status, session.workspace if session else None, turns, continuation)
 

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
 import { firstLine, lastNonEmptyLine } from "./eventPresentation.js";
+import { t } from "./messages.js";
 
 const props = defineProps({
   entry: { type: Object, required: true },
@@ -11,22 +12,22 @@ const props = defineProps({
 });
 defineEmits(["select"]);
 const name = computed(() => props.entry.command
-  ? props.entry.commandText || "Comando" : props.entry.tool.name);
+  ? props.entry.commandText || t.action.command : props.entry.tool.name);
 const title = computed(() => {
   if (props.entry.event?.item?.type === "file_change") return props.entry.toolPreview
-    ? `Alteração em ${props.entry.toolPreview}` : "Alteração de arquivos";
-  if (/^(?:(?:rtk(?: proxy)?|uv run)\s+)*(?:pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))(?:\s|$)/.test(name.value)) return "Executar testes";
-  return props.entry.title || (props.entry.command ? "Executar comando" : name.value);
+    ? t.action.fileChanged(props.entry.toolPreview) : t.tools.fileChanges;
+  if (/^(?:(?:rtk(?: proxy)?|uv run)\s+)*(?:pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))(?:\s|$)/.test(name.value)) return t.commandTitles.tests;
+  return props.entry.title || (props.entry.command ? t.commandTitles.run : name.value);
 });
 const fileChange = computed(() => props.entry.event?.item?.type === "file_change");
 const label = computed(() => props.entry.statusKey === "result_unconfirmed" && !props.terminal
-  ? "Resultado indisponível" : props.entry.label);
+  ? t.status.resultUnavailable : props.entry.label);
 const conflicting = computed(() => Boolean((props.entry.command ?? props.entry.tool).conflictingResults));
 const accessibleName = computed(() => [
   name.value, label.value.toLowerCase(),
-  props.entry.startedOffset ? `início ${props.entry.startedOffset.slice(1)}`
-    : props.entry.offset ? `observado em ${props.entry.offset.slice(1)}` : null,
-  conflicting.value ? "resultados divergentes" : null,
+  props.entry.startedOffset ? t.action.startedAt(props.entry.startedOffset.slice(1))
+    : props.entry.offset ? t.action.observedAt(props.entry.offset.slice(1)) : null,
+  conflicting.value ? t.action.conflicting : null,
 ].filter(Boolean).join(", "));
 </script>
 
@@ -45,9 +46,9 @@ const accessibleName = computed(() => [
       <span class="command-title">{{ title }}</span>
       <code v-if="entry.command" class="command-literal" :title="name">{{ name }}</code>
     </span>
-    <span class="command-status">{{ fileChange && !entry.failed && entry.statusKey === "completed" ? "Alteração" : label }}</span>
-    <span v-if="entry.offset" class="command-times command-offset" title="Primeira observação na captura">{{ entry.offset }}</span>
-    <span v-if="conflicting" class="failure-preview">Resultados divergentes</span>
+    <span class="command-status">{{ fileChange && !entry.failed && entry.statusKey === "completed" ? t.action.fileChange : label }}</span>
+    <span v-if="entry.offset" class="command-times command-offset" :title="t.action.firstObservation">{{ entry.offset }}</span>
+    <span v-if="conflicting" class="failure-preview">{{ t.action.conflictingTitle }}</span>
     <span v-else-if="entry.preview && !selected" class="failure-preview">{{ entry.preview }}</span>
     <span v-else-if="entry.tool && !fileChange && (entry.failed || entry.toolPreview)" class="failure-preview">
       {{ entry.failed ? lastNonEmptyLine(entry.toolError) || entry.label : firstLine(entry.toolPreview) }}

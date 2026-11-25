@@ -4,6 +4,7 @@ import ActionDetails from "./ActionDetails.vue";
 import ActionRow from "./ActionRow.vue";
 import CommandBlock from "./CommandBlock.vue";
 import EventRow from "./EventRow.vue";
+import { t } from "./messages.js";
 
 defineProps({
   entry: { type: Object, required: true },
@@ -28,7 +29,7 @@ const commandBlock = ref(null);
       <CommandBlock v-if="entry.command?.command" ref="commandBlock" preview-only :raw="entry.command.command" :workspace="workspace" @announce="$emit('announce', $event)" />
       <ActionDetails :entry="entry" :terminal="terminal" :workspace="workspace" :run-id="runId" @announce="$emit('announce', $event)">
         <template v-if="entry.command?.command" #controls>
-          <button type="button" class="link-button" @click="commandBlock?.copyCommand()">Copiar comando</button>
+          <button type="button" class="link-button" @click="commandBlock?.copyCommand()">{{ t.action.copyCommand }}</button>
         </template>
       </ActionDetails>
     </template>

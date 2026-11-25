@@ -3,6 +3,7 @@ import {
   formatDuration, formatOffset, isStartupCommand, maskPaths, reportedTokens, statusPresentation,
 } from "./eventPresentation.js";
 import { CommandTimeline } from "./timeline.js";
+import { t } from "./messages.js";
 
 export class TrajectoryProjection {
   constructor() {
@@ -156,7 +157,7 @@ export class TrajectoryProjection {
         return {
           ...entry, key: branch.thread, branch: true, rows, ancestors, terminal: branch.terminal || this.terminal,
           state: !branch.terminal && this.terminal ? "incomplete" : branch.state,
-          label: [`Subagente${branch.index ? ` ${branch.index}` : ""}`, branch.name].filter(Boolean).join(" · "),
+          label: [t.delegation.label(branch.index), branch.name].filter(Boolean).join(" · "),
           summary: maskPaths(branch.summary, this.workspace),
           failed: branch.state === "failed" || rows.some((row) => row.failed),
         };
@@ -193,8 +194,8 @@ export class TrajectoryProjection {
     }
     const labels = branches.sort((left, right) => left.index - right.index)
       .map((branch) => branch.name ? `${branch.index} · ${branch.name}` : String(branch.index));
-    const list = new Intl.ListFormat("pt-BR").format(labels);
-    const name = `Aguardar ${labels.length === 1 ? "subagente" : "subagentes"} ${list}`;
+    const list = new Intl.ListFormat("en-US").format(labels);
+    const name = t.delegation.wait(labels.length, list);
     return { ...entry, tool: { ...entry.tool, name } };
   }
 
@@ -300,12 +301,12 @@ export function observedFileChanges(actions, workspace) {
 }
 
 export function runOutcome({ exit_code: exitCode, error }, turn) {
-  if (error === "capture_unavailable") return { status: "unconfirmed", detail: "A captura ficou indisponível.", terminal: false };
-  if (error === "event_too_large") return { status: "failed", detail: "Captura incompleta. Um evento excedeu o limite de 8 MiB.", terminal: true };
-  if (error === "execution_failed") return { status: "failed", detail: "O executor encerrou sem informar um código de saída.", terminal: true };
+  if (error === "capture_unavailable") return { status: "unconfirmed", detail: t.outcome.captureUnavailable, terminal: false };
+  if (error === "event_too_large") return { status: "failed", detail: t.outcome.eventTooLarge, terminal: true };
+  if (error === "execution_failed") return { status: "failed", detail: t.outcome.executionFailed, terminal: true };
   const failed = turn === "turn.failed" || (Number.isInteger(exitCode) && exitCode !== 0);
   if (failed) {
-    const detail = Number.isInteger(exitCode) ? `Código de saída ${exitCode}.` : null;
+    const detail = Number.isInteger(exitCode) ? t.outcome.exitCode(exitCode) : null;
     return { status: "failed", detail, terminal: true };
   }
   const status = exitCode === 0 && turn === "turn.completed" ? "completed" : "unconfirmed";
@@ -315,7 +316,7 @@ export function runOutcome({ exit_code: exitCode, error }, turn) {
 export function savedOutcome(page) {
   if (page.status === "active" || page.continuation?.state === "active") return { status: "active", detail: null, terminal: false };
   if (page.status === "failed" && page.exit_code == null && page.last_turn !== "turn.failed") {
-    return { status: "failed", detail: "Falhou durante a captura.", terminal: true };
+    return { status: "failed", detail: t.outcome.failedDuringCapture, terminal: true };
   }
   return runOutcome(page, page.last_turn);
 }

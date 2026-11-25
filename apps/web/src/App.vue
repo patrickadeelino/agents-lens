@@ -11,6 +11,7 @@ import { loadRunHistory, RunHttpError, streamContinuation, streamPrompt, streamS
 import { runOutcome, savedOutcome } from "./trajectoryProjection.js";
 import { useRunFeedback } from "./runFeedback.js";
 import { useRunTrajectory } from "./useRunTrajectory.js";
+import { t } from "./messages.js";
 
 const view = ref("home");
 const navigationError = ref("");
@@ -67,16 +68,12 @@ const continuationDraft = computed({
   set: (value) => continuationDrafts.set(conversation.value?.root_run_id, value),
 });
 const continuationNote = computed(() => {
-  if (activeTurn.value) return `Disponível quando o turno ${activeNumber.value} terminar.`;
-  if (busy.value) return "Enviando o pedido…";
+  if (activeTurn.value) return t.continuation.availableAfter(activeNumber.value);
+  if (busy.value) return t.continuation.submitting;
   if (executorReady.value !== true && conversation.value?.continuation?.state === "available") {
-    return executorReady.value === false ? "A retomada exige o executor local." : "Verificando o executor local…";
+    return executorReady.value === false ? t.continuation.needsExecutor : t.continuation.checkingExecutor;
   }
-  return ({
-    ephemeral: "Esta execução não salvou uma sessão do Codex.",
-    active: "Aguarde a execução terminar para continuar.",
-    superseded: "Esta conversa tem uma execução mais recente.",
-  })[conversation.value?.continuation?.state] ?? "O Codex não confirmou uma sessão disponível para esta execução.";
+  return t.continuation.reasons[conversation.value?.continuation?.state] ?? t.continuation.noSession;
 });
 const sidebarThreads = computed(() => {
   const current = conversation.value;
@@ -121,7 +118,9 @@ function rememberEvidence(runId, data, before) {
 }
 
 function turnLabel(status) {
-  return ({ active: "Em andamento", completed: "Concluído", failed: "Falhou", unconfirmed: "Resultado não confirmado" })[status];
+  return ({
+    active: t.status.inProgress, completed: t.status.completed, failed: t.status.failed, unconfirmed: t.status.actionUnconfirmed,
+  })[status];
 }
 
 function presentedTurn(turn) {
@@ -338,7 +337,7 @@ function provisionalConversation(runId, text, legacy = false) {
   return {
     thread_id: null, root_run_id: runId, latest_run_id: runId, legacy,
     workspace: legacy ? null : selectedWorkspace.value?.path,
-    title: legacy ? "Execução salva" : (text.trim().replace(/\s+/g, " ").slice(0, 80) || "Conversa"),
+    title: legacy ? t.app.savedRun : (text.trim().replace(/\s+/g, " ").slice(0, 80) || t.common.conversation),
     last_activity_at: turn.submitted_at, status: "active", turns: [turn], continuation: { state: "active" },
   };
 }
@@ -469,9 +468,9 @@ function resumeObservation(runId) {
 
 function submitError(error) {
   if (error instanceof RunHttpError) {
-    return maskPaths(error.detail) || `Falha ao enviar o pedido (HTTP ${error.status}). Seu rascunho foi preservado.`;
+    return maskPaths(error.detail) || t.app.sendFailed(error.status);
   }
-  return "Envio não confirmado. Confira a conversa mais recente antes de reenviar.";
+  return t.app.sendUnconfirmed;
 }
 
 async function recoverSubmission(runId, signal) {
@@ -552,7 +551,7 @@ async function sendPrompt(text, origin = null) {
     if (accepted) await recoverSubmission(accepted, signal);
     else if (!origin) composerError.value = submitError(error);
     else if (error instanceof RunHttpError && error.status === 409) {
-      continuationError.value = "A execução de origem já foi continuada. Seu rascunho foi preservado.";
+      continuationError.value = t.continuation.alreadyContinued;
       const refreshed = await refreshConversation(origin, signal).catch(() => null);
       if (refreshed?.status === "active") resumeObservation(refreshed.latest_run_id);
     } else continuationError.value = submitError(error);
@@ -601,7 +600,7 @@ async function restoreLocation({ focus = false } = {}) {
     if (request.signal.aborted) return;
     conversation.value = null;
     view.value = "home";
-    navigationError.value = "Não foi possível abrir esta conversa.";
+    navigationError.value = t.app.openFailed;
   }
 }
 
@@ -662,49 +661,49 @@ onUnmounted(() => {
       @new="newConversation" @open="onThreadClick" @retry="loadThreads" @close="closeDrawer()" />
 
     <header class="compact-navigation" :inert="drawer">
-      <button ref="historyButton" type="button" class="icon-button" aria-label="Abrir histórico" aria-controls="conversation-sidebar"
+      <button ref="historyButton" type="button" class="icon-button" :aria-label="t.app.openHistory" aria-controls="conversation-sidebar"
         :aria-expanded="drawer" @click="drawer = true">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
       </button>
-      <strong ref="compactHeading" tabindex="-1">{{ conversation?.title || "Agent Lens" }}</strong>
-      <button type="button" class="icon-button compact-new" aria-label="Nova conversa" @click="newConversation()">
+      <strong ref="compactHeading" tabindex="-1">{{ conversation?.title || t.common.appName }}</strong>
+      <button type="button" class="icon-button compact-new" :aria-label="t.common.newConversation" @click="newConversation()">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </header>
 
     <main class="conversation-main" :class="{ 'home-main': view !== 'thread' }" :inert="drawer || (hasPane && !wideSidebar)">
       <div v-if="executorReady === false" class="connection-notice executor-notice">
-        <p role="status">Executor indisponível. Inicie o executor no host e confira o socket.</p>
-        <button type="button" class="secondary" :disabled="checkingExecutor" @click="checkExecutor">Verificar conexão</button>
+        <p role="status">{{ t.executor.unavailable }}</p>
+        <button type="button" class="secondary" :disabled="checkingExecutor" @click="checkExecutor">{{ t.executor.check }}</button>
       </div>
       <section v-if="view === 'home'" class="home-composer" aria-labelledby="composer-title">
         <p v-if="navigationError" class="composer-status" role="alert">
-          {{ navigationError }} <button type="button" class="link-button" @click="restoreLocation()">Tentar novamente</button>
+          {{ navigationError }} <button type="button" class="link-button" @click="restoreLocation()">{{ t.common.tryAgain }}</button>
         </p>
         <form id="run-form" class="run-form" @submit.prevent="sendPrompt(prompt)">
-          <p class="view-caption">Nova conversa</p>
-          <h1 id="composer-title"><label for="prompt">O que o Codex deve fazer?</label></h1>
+          <p class="view-caption">{{ t.common.newConversation }}</p>
+          <h1 id="composer-title"><label for="prompt">{{ t.composer.heading }}</label></h1>
           <textarea id="prompt" ref="promptInput" v-model="prompt" name="prompt" rows="5" required :readonly="busy"
-            placeholder="Leia o README e identifique como iniciar o serviço."
+            :placeholder="t.composer.placeholder"
             @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
             @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
           <div class="workspace-summary">
             <button type="button" class="secondary compact-button" :disabled="!executorReady || busy || pickingWorkspace" @click="chooseWorkspace">
-              {{ pickingWorkspace ? "Aguardando seleção…" : "Selecionar pasta" }}
+              {{ pickingWorkspace ? t.composer.selecting : t.composer.selectFolder }}
             </button>
             <p v-if="selectedWorkspace" class="workspace-path">{{ selectedWorkspace.path }}</p>
           </div>
           <div class="run-actions">
             <button id="execute" type="submit" :disabled="!executorReady || busy || pickingWorkspace || !selectedWorkspace || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
-              {{ busy ? "Enviando…" : "Executar" }}
+              {{ busy ? t.composer.sending : t.composer.run }}
             </button>
-            <kbd>Ctrl/⌘ + Enter</kbd>
+            <kbd>{{ t.composer.shortcut }}</kbd>
           </div>
           <p v-if="workspaceError" class="composer-status" role="alert">{{ workspaceError }}</p>
-          <p v-if="composerError" class="composer-status" role="alert">Falha ao iniciar a execução. {{ composerError }}</p>
+          <p v-if="composerError" class="composer-status" role="alert">{{ t.composer.startFailed(composerError) }}</p>
         </form>
       </section>
-      <p v-else-if="view === 'loading'" class="pane-notice" role="status">Carregando conversa…</p>
+      <p v-else-if="view === 'loading'" class="pane-notice" role="status">{{ t.app.loadingConversation }}</p>
 
       <template v-else-if="view === 'thread'">
         <header class="conversation-heading">
@@ -717,15 +716,15 @@ onUnmounted(() => {
           <div v-if="activeTurn" class="conversation-shortcuts">
             <button type="button" class="secondary compact-button active-shortcut"
               :aria-current="inspectedRunId === activeTurn.run_id ? 'true' : undefined" @click="inspectActive">
-              <span class="turn-state-dot" aria-hidden="true"></span> Turno {{ activeNumber }} em andamento
+              <span class="turn-state-dot" aria-hidden="true"></span> {{ t.common.turnInProgress(activeNumber) }}
             </button>
           </div>
           <div v-if="connection === CONNECTION.reconnecting || connection === CONNECTION.interrupted" class="connection-notice">
-            <p role="status">{{ connection === CONNECTION.reconnecting ? "Reconectando ao turno ativo…" : "A conexão com a execução foi interrompida." }}</p>
-            <button v-if="activeRunId" type="button" class="secondary" @click="resumeObservation(activeRunId)">Tentar agora</button>
+            <p role="status">{{ connection === CONNECTION.reconnecting ? t.connection.reconnectingActive : t.connection.runInterrupted }}</p>
+            <button v-if="activeRunId" type="button" class="secondary" @click="resumeObservation(activeRunId)">{{ t.common.retryNow }}</button>
           </div>
         </header>
-        <ol ref="turnScroller" class="turn-list" aria-label="Turnos da conversa">
+        <ol ref="turnScroller" class="turn-list" :aria-label="t.app.turnList">
           <ConversationTurn v-for="(turn, index) in turns" :key="turn.run_id" :turn="presentedTurn(turn)" :number="index + 1"
             :selected="inspectedRunId === turn.run_id" :live="turn.run_id === activeRunId && connection === CONNECTION.receiving" :observed="turnEvidence(turn)"
             :workspace="observed.get(turn.run_id)?.workspace || (turn.run_id === activeRunId ? model.data.value.workspace : undefined)"
@@ -734,15 +733,15 @@ onUnmounted(() => {
         </ol>
         <div class="conversation-composer">
           <form class="continuation-form" :class="{ 'continuation-waiting': !canContinue && !continuationDraft }" @submit.prevent="sendPrompt(continuationDraft, conversation.latest_run_id)">
-            <label for="continuation-prompt">Continuar conversa</label>
+            <label for="continuation-prompt">{{ t.continuation.label }}</label>
             <textarea v-if="canContinue || continuationDraft" id="continuation-prompt" v-model="continuationDraft" rows="2" required
               :readonly="!canContinue" :aria-describedby="canContinue ? undefined : 'continuation-note'"
-              placeholder="Envie um novo pedido nesta conversa."
+              :placeholder="t.continuation.placeholder"
               @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
               @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
             <textarea v-else id="continuation-prompt" class="visually-hidden" disabled aria-describedby="continuation-note"></textarea>
             <p v-if="!canContinue" id="continuation-note" class="quiet-text">{{ continuationNote }}</p>
-            <button type="submit" :disabled="!canContinue || !continuationDraft.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">Enviar</button>
+            <button type="submit" :disabled="!canContinue || !continuationDraft.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">{{ t.continuation.send }}</button>
           </form>
           <p v-if="continuationError" role="alert" class="continuation-error">{{ continuationError }}</p>
         </div>

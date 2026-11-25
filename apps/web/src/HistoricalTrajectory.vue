@@ -4,6 +4,7 @@ import { loadRunHistory } from "./runs.js";
 import { savedOutcome } from "./trajectoryProjection.js";
 import { useRunTrajectory } from "./useRunTrajectory.js";
 import TrajectoryPane from "./TrajectoryPane.vue";
+import { t } from "./messages.js";
 
 defineOptions({ inheritAttrs: false });
 const props = defineProps({ runId: { type: String, required: true }, status: String, threadId: String });
@@ -27,7 +28,7 @@ async function load() {
     const outcome = savedOutcome(page);
     detail.value = outcome.detail ?? (outcome.status === "failed" ? model.data.value.issue : "");
   } catch {
-    if (!current.signal.aborted) error.value = "Não foi possível carregar a trajetória.";
+    if (!current.signal.aborted) error.value = t.pane.loadFailed;
   } finally {
     if (request === current && !current.signal.aborted) loading.value = false;
   }

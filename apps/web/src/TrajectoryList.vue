@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { branchStateLabel, visibleTrajectoryRows } from "./eventPresentation.js";
 import TechnicalEvents from "./TechnicalEvents.vue";
 import TrajectoryEntry from "./TrajectoryEntry.vue";
+import { t } from "./messages.js";
 
 const props = defineProps({
   rows: Array, filter: String, selected: String, terminal: Boolean,
@@ -33,7 +34,7 @@ function toggle(key, event) {
           :workspace="workspace" :run-id="runId" :is-open="isOpen"
           @toggle="$emit('toggle', $event)" @select="$emit('select', $event)" @announce="$emit('announce', $event)" />
         <p v-if="!entry.rows.length" class="delegation-summary">
-          {{ entry.terminal ? "Nenhuma atividade capturada." : "Aguardando atividade do subagente." }}
+          {{ entry.terminal ? t.delegation.noActivity : t.delegation.waiting }}
         </p>
       </details>
       <TechnicalEvents v-else-if="entry.technicalEvents" :events="entry.technicalEvents" :title="entry.groupTitle">

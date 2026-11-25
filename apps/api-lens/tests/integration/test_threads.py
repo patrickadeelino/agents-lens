@@ -57,7 +57,7 @@ def test_legacy_reply_is_recovered_only_for_detail(tmp_path: Path, monkeypatch) 
     with TestClient(app) as client:
         listing = client.get("/threads").json()["threads"][0]
         detail = client.get(f"/threads/by-run/{capture.directory.name}").json()
-    assert listing["title"] == "Conversa anterior"
+    assert listing["title"] == "Earlier conversation"
     assert detail["turns"][0]["prompt"] is None
     assert detail["turns"][0]["assistant_markdown"] == "Observed reply"
     assert detail["turns"][0]["status"] == "completed"

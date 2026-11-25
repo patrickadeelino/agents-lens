@@ -4,6 +4,7 @@ import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSu
 import { actionCallId, flattenTrajectory, observedFileChanges } from "./trajectoryProjection.js";
 import { CONNECTION, connectionLabel } from "./connectionState.js";
 import TrajectoryList from "./TrajectoryList.vue";
+import { t } from "./messages.js";
 
 const props = defineProps({
   model: { type: Object, required: true },
@@ -101,9 +102,9 @@ const duration = computed(() => {
     ? observedRunDuration(data.value.firstOffset, data.value.lastOffset, liveElapsed) : null;
 });
 const durationLabel = computed(() =>
-  props.summary?.total_duration_ns != null ? "Duração total" : "Duração observada");
+  props.summary?.total_duration_ns != null ? t.pane.totalDuration : t.pane.observedDuration);
 const switchToActive = computed(() => !props.active && props.activeTurnNumber != null);
-const headingText = computed(() => props.turnNumber != null ? `Trajetória · Turno ${props.turnNumber}` : "Trajetória");
+const headingText = computed(() => t.pane.heading(props.turnNumber));
 const hasObservedActions = computed(() => props.summary ? actions.value != null : data.value.actions.length > 0
   || (data.value.terminal && data.value.rows.length > 0 && nextBefore.value == null));
 const index = computed(() => flat.value.filter((entry) => (entry.command || entry.tool)
@@ -266,30 +267,30 @@ onUnmounted(() => {
   <aside id="trajectory-pane" class="trajectory-pane" aria-labelledby="trajectory-title">
     <header class="trajectory-header">
       <button v-if="closeable" type="button" class="link-button trajectory-mobile-back" @click="$emit('close')">
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6M8 12h12"/></svg> Conversa
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6M8 12h12"/></svg> {{ t.common.conversation }}
       </button>
-      <h2 id="trajectory-title" ref="heading" tabindex="-1"><span class="trajectory-heading-wide">{{ headingText }}</span><span v-if="turnNumber" class="trajectory-heading-narrow">Turno {{ turnNumber }}</span></h2>
+      <h2 id="trajectory-title" ref="heading" tabindex="-1"><span class="trajectory-heading-wide">{{ headingText }}</span><span v-if="turnNumber" class="trajectory-heading-narrow">{{ t.common.turn(turnNumber) }}</span></h2>
       <button v-if="closeable" type="button" class="link-button trajectory-close" @click="$emit('close')">
-        Fechar <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        {{ t.pane.close }} <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
       </button>
     </header>
 
     <div v-if="switchToActive" class="active-context">
       <div>
-        <p><span class="turn-state-dot" aria-hidden="true"></span> Turno {{ activeTurnNumber }} em andamento</p>
+        <p><span class="turn-state-dot" aria-hidden="true"></span> {{ t.common.turnInProgress(activeTurnNumber) }}</p>
         <p v-if="activeConnection === CONNECTION.reconnecting || activeConnection === CONNECTION.interrupted" class="quiet-text" role="status">
-          {{ activeConnection === CONNECTION.reconnecting ? "Reconectando ao turno ativo…" : "Conexão com o turno ativo interrompida." }}
+          {{ activeConnection === CONNECTION.reconnecting ? t.connection.reconnectingActive : t.connection.activeInterrupted }}
         </p>
       </div>
       <div class="active-context-actions">
-        <button type="button" class="secondary compact-button" @click="$emit('active-turn')">Ir ao turno {{ activeTurnNumber }}</button>
-        <button v-if="activeConnection === CONNECTION.interrupted" type="button" class="secondary compact-button" @click="$emit('retry')">Tentar agora</button>
+        <button type="button" class="secondary compact-button" @click="$emit('active-turn')">{{ t.pane.goToTurn(activeTurnNumber) }}</button>
+        <button v-if="activeConnection === CONNECTION.interrupted" type="button" class="secondary compact-button" @click="$emit('retry')">{{ t.common.retryNow }}</button>
       </div>
     </div>
 
     <div v-else-if="active && activeTurnNumber" class="active-context">
-      <p><span class="turn-state-dot" aria-hidden="true"></span> Ao vivo · {{ following ? "seguindo" : "inspecionando" }} o turno {{ activeTurnNumber }}</p>
-      <button type="button" class="secondary compact-button" @click="followLatest">↓ Ir ao último evento</button>
+      <p><span class="turn-state-dot" aria-hidden="true"></span> {{ t.pane.following(following, activeTurnNumber) }}</p>
+      <button type="button" class="secondary compact-button" @click="followLatest">{{ t.pane.goToLatest }}</button>
     </div>
 
     <div ref="viewport" class="trajectory-scroll" @scroll.passive="onScroll">
@@ -297,28 +298,28 @@ onUnmounted(() => {
         <div v-if="prompt" class="trajectory-prompt-disclosure">
           <button v-if="promptPreview" type="button" class="trajectory-prompt-toggle"
             :aria-controls="promptId" :aria-expanded="promptExpanded"
-            :aria-label="promptExpanded ? 'Mostrar prévia do prompt' : 'Mostrar prompt completo'"
+            :aria-label="promptExpanded ? t.pane.showPromptPreview : t.pane.showFullPrompt"
             @click="promptExpanded = !promptExpanded"></button>
           <p :id="promptId" class="trajectory-prompt">{{ promptExpanded ? prompt : promptPreview ?? prompt }}</p>
         </div>
         <div v-if="connection === CONNECTION.reconnecting || connection === CONNECTION.interrupted" class="connection-notice">
           <p role="status">
-            {{ connection === CONNECTION.reconnecting ? 'Conexão perdida. Tentando reconectar.' : 'Fluxo interrompido. Os eventos exibidos permanecem disponíveis.' }}
-            <span v-if="lastUpdateSeconds != null && connection === CONNECTION.reconnecting"> Última atualização há {{ lastUpdateSeconds }} s.</span>
+            {{ connection === CONNECTION.reconnecting ? t.connection.lost : t.connection.streamStopped }}
+            <span v-if="lastUpdateSeconds != null && connection === CONNECTION.reconnecting"> {{ t.connection.lastUpdate(lastUpdateSeconds) }}</span>
           </p>
-          <button v-if="runId" type="button" class="secondary" @click="$emit('retry')">Tentar agora</button>
+          <button v-if="runId" type="button" class="secondary" @click="$emit('retry')">{{ t.common.retryNow }}</button>
         </div>
-        <p v-else-if="recovered != null" class="quiet-text" role="status">Reconectado · {{ recovered }} {{ recovered === 1 ? "evento recebido" : "eventos recebidos" }}</p>
+        <p v-else-if="recovered != null" class="quiet-text" role="status">{{ t.connection.recovered(recovered) }}</p>
         <div class="trajectory-metric-summary">
           <dl class="trajectory-metrics">
-            <div v-if="status"><dt>{{ active && connection ? connectionLabel(connection) : "Estado do turno" }}</dt><dd>{{ status }}</dd></div>
+            <div v-if="status"><dt>{{ active && connection ? connectionLabel(connection) : t.pane.turnState }}</dt><dd>{{ status }}</dd></div>
             <div v-if="duration"><dt>{{ durationLabel }}</dt><dd>{{ duration }}</dd></div>
             <div v-if="hasObservedActions">
-              <dt>{{ partial ? "Trecho carregado" : active ? "Observadas até agora" : "Observadas" }}</dt>
-              <dd>{{ actions }} {{ actions === 1 ? "ação" : "ações" }}<template v-if="failures != null && (failures || (!active && !partial))"> · {{ failures }} {{ failures === 1 ? "falha" : "falhas" }}</template></dd>
+              <dt>{{ partial ? t.pane.loadedSection : active ? t.pane.observedSoFar : t.pane.observed }}</dt>
+              <dd>{{ t.common.actions(actions) }}<template v-if="failures != null && (failures || (!active && !partial))"> · {{ t.common.failures(failures) }}</template></dd>
             </div>
           </dl>
-          <dl v-if="tokens || tokenDetails.length" class="trajectory-tokens" aria-label="Uso de tokens">
+          <dl v-if="tokens || tokenDetails.length" class="trajectory-tokens" :aria-label="t.tokens.usage">
             <div v-if="tokens"><dt>{{ tokens.label }}</dt><dd>{{ tokens.value }}</dd></div>
             <template v-if="tokenDetails.length > 1 || !tokens">
               <div v-for="token in tokenDetails" :key="token.field"><dt>{{ token.label }}</dt><dd>{{ token.value }}</dd></div>
@@ -327,28 +328,28 @@ onUnmounted(() => {
         </div>
         <p v-if="detail" class="trajectory-state-note">{{ detail }}</p>
         <div v-if="summary?.files.length || summary?.tests.length || files.length" class="trajectory-highlights">
-        <section v-if="summary?.files.length" class="file-highlights" aria-label="Arquivos alterados observados">
-          <h3>Arquivos alterados · {{ summary.files.length }}</h3>
+        <section v-if="summary?.files.length" class="file-highlights" :aria-label="t.pane.observedFiles">
+          <h3>{{ t.pane.changedFiles }} · {{ summary.files.length }}</h3>
           <ul>
             <li v-for="file in summary.files" :key="file.path">
               <button type="button" class="link-button" @click="showEvidence(file.item_id)"><code>{{ maskPaths(file.path, data.workspace) }}</code></button>
             </li>
           </ul>
         </section>
-        <section v-else-if="!summary && files.length" class="file-highlights" aria-label="Arquivos alterados observados">
-          <h3>Arquivos alterados <span v-if="nextBefore != null">· trecho carregado</span></h3>
+        <section v-else-if="!summary && files.length" class="file-highlights" :aria-label="t.pane.observedFiles">
+          <h3>{{ t.pane.changedFiles }} <span v-if="nextBefore != null">{{ t.pane.loadedSuffix }}</span></h3>
           <ul>
             <li v-for="file in files" :key="file.path">
               <button type="button" class="link-button" @click="jumpTo(file.entry)"><code>{{ file.path }}</code></button>
             </li>
           </ul>
         </section>
-        <section v-if="summary?.tests.length" class="file-highlights" aria-label="Comandos de teste observados">
-          <h3>Testes</h3>
+        <section v-if="summary?.tests.length" class="file-highlights" :aria-label="t.pane.observedTests">
+          <h3>{{ t.pane.tests }}</h3>
           <ul>
             <li v-for="(test, index) in summary.tests" :key="test.item_id">
               <button type="button" class="link-button" @click="showEvidence(test.item_id)">
-                {{ index + 1 }}ª execução · {{ test.exit_code === 0 ? "Concluiu" : test.exit_code == null ? "Resultado indisponível" : `Falhou (saída ${test.exit_code})` }}
+                {{ t.pane.testRun(index + 1, test.exit_code === 0 ? t.status.completed : test.exit_code == null ? t.status.resultUnavailable : t.pane.testFailed(test.exit_code)) }}
               </button>
             </li>
           </ul>
@@ -356,22 +357,22 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <p v-if="loading" class="pane-notice" role="status">Carregando trajetória…</p>
+      <p v-if="loading" class="pane-notice" role="status">{{ t.pane.loading }}</p>
       <div v-else-if="error" class="pane-notice" role="alert">
         <p>{{ error }}</p>
-        <button type="button" class="secondary" @click="$emit('retry-history')">Tentar novamente</button>
+        <button type="button" class="secondary" @click="$emit('retry-history')">{{ t.common.tryAgain }}</button>
       </div>
       <section v-if="data.rows.length || nextBefore != null" class="trajectory-events" aria-labelledby="actions-title">
         <div class="pane-actions-heading">
-          <h3 id="actions-title">Ações</h3>
-          <div class="event-filters" aria-label="Filtrar eventos" role="group">
-            <button v-for="[value, label] in [['essential', 'Essencial'], ['all', 'Tudo'], ['failures', 'Falhas']]" :key="value"
+          <h3 id="actions-title">{{ t.pane.actions }}</h3>
+          <div class="event-filters" :aria-label="t.pane.filterLabel" role="group">
+            <button v-for="(label, value) in t.pane.filters" :key="value"
               type="button" :aria-pressed="filter === value" @click="filter = value; following = false">{{ label }}</button>
           </div>
         </div>
         <details v-if="(filter === 'all' && index.length >= 8) || index.some((entry) => entry.ancestors?.length)" class="action-index">
-          <summary>Índice de ações <span>{{ index.length }}{{ nextBefore != null ? " carregadas" : "" }}</span></summary>
-          <nav aria-label="Índice de ações da trajetória">
+          <summary>{{ t.pane.index }} <span>{{ t.pane.indexCount(index.length, nextBefore != null) }}</span></summary>
+          <nav :aria-label="t.pane.indexNavigation">
             <ol>
               <li v-for="entry in index" :key="entry.key">
                 <button class="index-action" type="button" @click="jumpTo(entry)">{{ indexLabel(entry) }}</button>
@@ -381,20 +382,20 @@ onUnmounted(() => {
         </details>
         <div v-if="nextBefore != null" class="history-controls">
           <button type="button" class="link-button" :aria-disabled="loadingEarlier" @click="earlier">
-            {{ loadingEarlier ? "Carregando eventos anteriores…" : "Carregar eventos anteriores" }}
+            {{ loadingEarlier ? t.pane.loadingEarlier : t.pane.loadEarlier }}
           </button>
           <p v-if="historyError" role="alert">{{ historyError }}</p>
         </div>
         <p v-if="linkedCall && !expanded && !loading && !loadingEarlier" class="pane-notice">
-          {{ nextBefore != null ? "Carregue os eventos anteriores para localizar a ação deste link." : "A ação deste link não está nos eventos disponíveis." }}
+          {{ nextBefore != null ? t.pane.loadEarlierForLink : t.pane.linkUnavailable }}
         </p>
-        <p v-if="!visible.length" class="empty-timeline">{{ filter === "failures" ? "Nenhuma falha nos eventos carregados." : "Nenhuma ação nos eventos carregados." }}</p>
+        <p v-if="!visible.length" class="empty-timeline">{{ filter === "failures" ? t.pane.noFailures : t.pane.noActions }}</p>
         <TrajectoryList ref="timeline" :rows="data.rows" :filter="filter" :selected="expanded"
           :terminal="data.terminal" :workspace="data.workspace" :run-id="runId" :is-open="isBranchOpen"
           @toggle="setBranch" @select="select" @announce="$emit('announce', $event)" />
       </section>
       <p v-else-if="!loading && !error && !data.rows.length" class="pane-notice" role="status">
-        {{ active ? "Aguardando os primeiros eventos." : "Nenhum evento disponível para este turno." }}
+        {{ active ? t.pane.waitingEvents : t.pane.noEvents }}
       </p>
     </div>
   </aside>

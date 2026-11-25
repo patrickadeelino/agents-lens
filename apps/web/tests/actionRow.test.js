@@ -14,7 +14,7 @@ test("the rendered command keeps the raw straight quotes", async () => {
     const { default: ActionRow } = await vite.ssrLoadModule("/src/ActionRow.vue");
     const command = `printf '%s' "Agent Lens"`;
     const markup = await renderToString(h(ActionRow, {
-      entry: { command: { command }, commandText: displayCommand(command), label: "Concluído", statusKey: "completed" },
+      entry: { command: { command }, commandText: displayCommand(command), label: "Completed", statusKey: "completed" },
     }));
     const rendered = /<code[^>]*>([^<]*)<\/code>/.exec(markup)?.[1]
       .replaceAll("&#39;", "'").replaceAll("&quot;", '"');

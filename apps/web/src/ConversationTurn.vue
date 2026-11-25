@@ -2,6 +2,7 @@
 import { computed, ref, useId } from "vue";
 import { maskPaths } from "./eventPresentation.js";
 import { renderAgentMarkdown } from "./markdown.js";
+import { t } from "./messages.js";
 
 const props = defineProps({
   turn: { type: Object, required: true },
@@ -13,7 +14,7 @@ const props = defineProps({
   observed: Object,
 });
 defineEmits(["inspect"]);
-const clock = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 const timestamp = computed(() => props.turn.submitted_at ?? props.turn.finished_at);
 const time = computed(() => {
   const date = new Date(timestamp.value);
@@ -26,33 +27,34 @@ const preview = computed(() => reply.value?.replace(/!?\[([^\]]+)\]\([^)]*\)/g, 
 const replyId = useId();
 const expanded = ref(true);
 const status = computed(() => ({
-  active: props.live ? "Em andamento · ao vivo" : "Em andamento", completed: "Concluído", failed: "Falhou", unconfirmed: "Resultado não confirmado",
-})[props.turn.status] ?? "Estado indisponível");
+  active: props.live ? t.status.inProgressLive : t.status.inProgress,
+  completed: t.status.completed, failed: t.status.failed, unconfirmed: t.status.actionUnconfirmed,
+})[props.turn.status] ?? t.status.unknownTurn);
 
 </script>
 
 <template>
   <li class="turn-card" :class="{ 'turn-selected': selected }" :data-turn-run="turn.run_id" :data-turn-status="status">
-    <article :aria-label="`Turno ${number}`">
+    <article :aria-label="t.common.turn(number)">
       <header class="turn-card-meta">
-        <h2>Turno {{ number }}<template v-if="time"> · <time :datetime="timestamp">{{ time }}</time></template></h2>
+        <h2>{{ t.common.turn(number) }}<template v-if="time"> · <time :datetime="timestamp">{{ time }}</time></template></h2>
         <div class="turn-card-controls">
           <button type="button" class="secondary compact-button inspect-turn" :aria-controls="selected ? 'trajectory-pane' : undefined"
-            :aria-expanded="selected" :aria-label="selected ? `Turno ${number} em inspeção` : `Ver trajetória do turno ${number}`"
+            :aria-expanded="selected" :aria-label="selected ? t.turn.selectedLabel(number) : t.turn.openLabel(number)"
             @click="$emit('inspect', turn.run_id)">
             <span v-if="selected" class="selected-dot" aria-hidden="true"></span>
-            {{ selected ? "Em inspeção" : "Ver trajetória" }}
+            {{ selected ? t.turn.inspecting : t.turn.viewTrajectory }}
             <svg v-if="!selected" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></svg>
           </button>
         </div>
       </header>
-      <p class="turn-prompt">{{ turn.prompt ?? "Mensagem original indisponível" }}</p>
-      <p v-if="!reply" class="turn-reply-preview">{{ activity || (turn.status === 'active' ? 'Aguardando resposta…' : 'Resposta indisponível.') }}</p>
+      <p class="turn-prompt">{{ turn.prompt ?? t.turn.missingPrompt }}</p>
+      <p v-if="!reply" class="turn-reply-preview">{{ activity || (turn.status === 'active' ? t.turn.waitingReply : t.turn.noReply) }}</p>
       <div v-else class="turn-response">
         <div class="turn-response-header">
-          <h3>Resposta do Codex</h3>
+          <h3>{{ t.turn.reply }}</h3>
           <button type="button" class="link-button reply-toggle" :aria-controls="replyId" :aria-expanded="expanded"
-            @click="expanded = !expanded">{{ expanded ? "Recolher resposta" : "Mostrar resposta" }}</button>
+            @click="expanded = !expanded">{{ expanded ? t.turn.collapseReply : t.turn.showReply }}</button>
         </div>
         <p v-if="!expanded && preview" class="turn-reply-preview">{{ preview }}</p>
         <div :id="replyId" v-show="expanded" class="agent-message turn-reply" v-html="html"></div>
@@ -66,9 +68,9 @@ const status = computed(() => ({
             </span>
             {{ status }}
           </span>
-          <span v-if="observed" class="turn-action-count">{{ observed.actions }} {{ observed.actions === 1 ? "ação" : "ações" }}{{ observed.partial ? " observadas" : "" }}</span>
-          <span v-if="observed?.files?.length" class="turn-action-count">{{ observed.files.length }} {{ observed.files.length === 1 ? "arquivo alterado" : "arquivos alterados" }}</span>
-          <span v-if="observed?.failures" class="turn-failure-count">{{ observed.failures }} {{ observed.failures === 1 ? "falha" : "falhas" }}</span>
+          <span v-if="observed" class="turn-action-count">{{ observed.partial ? t.turn.observedActions(observed.actions) : t.common.actions(observed.actions) }}</span>
+          <span v-if="observed?.files?.length" class="turn-action-count">{{ t.turn.changedFiles(observed.files.length) }}</span>
+          <span v-if="observed?.failures" class="turn-failure-count">{{ t.common.failures(observed.failures) }}</span>
         </div>
       </footer>
     </article>

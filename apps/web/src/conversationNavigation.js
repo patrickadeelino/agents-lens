@@ -1,3 +1,5 @@
+import { t } from "./messages.js";
+
 export function resolveInspectedRun(thread, requestedRunId) {
   if (!requestedRunId) return null;
   if (!thread.turns.some((turn) => turn.run_id === requestedRunId)) {
@@ -26,7 +28,7 @@ export function groupConversations(threads) {
     if (!groups.has(path)) {
       groups.set(path, {
         path,
-        name: path ? workspaceName(path) : "Conversas anteriores",
+        name: path ? workspaceName(path) : t.sidebar.earlier,
         runId: thread.root_run_id,
         threads: [],
       });

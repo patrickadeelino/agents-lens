@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from "vue";
+import { t } from "./messages.js";
 
 const props = defineProps({
   events: { type: Array, required: true },
@@ -9,8 +10,8 @@ const title = computed(() => {
   if (props.title) return props.title;
   if (props.events.length === 1) return props.events[0].label;
   return props.events.some(({ event }) => event.type === "thread.started" || event.type === "turn.started")
-    ? "Inicialização e diagnósticos"
-    : "Eventos técnicos";
+    ? t.common.startupGroup
+    : t.events.technicalGroup;
 });
 </script>
 
@@ -18,7 +19,7 @@ const title = computed(() => {
   <details class="technical-events">
     <summary>
       <span>{{ title }}</span>
-      <span v-if="events.length > 1" class="technical-count">{{ ` · ${events.length} eventos` }}</span>
+      <span v-if="events.length > 1" class="technical-count">{{ ` · ${t.events.count(events.length)}` }}</span>
     </summary>
     <ol class="technical-event-list">
       <li

@@ -1,6 +1,7 @@
 import { onUnmounted, ref, watch } from "vue";
 import { CONNECTION } from "./connectionState.js";
 import { displayCommand, maskPaths } from "./eventPresentation.js";
+import { t } from "./messages.js";
 
 export function useRunFeedback(connection) {
   const announcement = ref("");
@@ -37,11 +38,11 @@ export function useRunFeedback(connection) {
       recovered.value = null;
       refreshAge();
       ageTimer = setInterval(refreshAge, 1000);
-      announce("Conexão perdida. Tentando reconectar.");
+      announce(t.connection.lost);
     } else if (previous === CONNECTION.reconnecting && current === CONNECTION.receiving) {
       recovering = true;
       recovered.value = 0;
-      announce("Reconectado.");
+      announce(t.connection.reconnected);
       clearTimeout(recoveredTimer);
       recoveredTimer = setTimeout(() => {
         recovered.value = null;
@@ -50,7 +51,7 @@ export function useRunFeedback(connection) {
     } else if (current === CONNECTION.interrupted) {
       recovered.value = null;
       recovering = false;
-      announce("Fluxo de eventos interrompido.");
+      announce(t.connection.streamInterrupted);
     }
   }, { flush: "sync" });
 
@@ -60,7 +61,8 @@ export function useRunFeedback(connection) {
     const { event } = record;
     if (event.type === "item.completed" && event.item?.status === "failed") {
       const name = maskPaths(displayCommand(event.item.command) || event.item.tool, workspace);
-      const failure = name ? `${event.item.command ? "Comando" : "Ação"} falhou: ${name.slice(0, 100)}.` : "Uma ação falhou.";
+      const describe = event.item.command ? t.announce.commandFailed : t.announce.actionFailed;
+      const failure = name ? describe(name.slice(0, 100)) : t.announce.unnamedFailure;
       announce(failure);
     }
   }

@@ -92,7 +92,7 @@ def validate_workspace(request: WorkspaceCheck) -> Response:
 async def pick_directory() -> Path | None:
     try:
         process = await asyncio.create_subprocess_exec(
-            "/usr/bin/zenity", "--file-selection", "--directory", "--title=Selecionar pasta no Agent Lens",
+            "/usr/bin/zenity", "--file-selection", "--directory", "--title=Select a folder for Agent Lens",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
     except OSError as error:

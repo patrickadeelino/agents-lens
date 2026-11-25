@@ -33,9 +33,9 @@ AGENT_LENS_HOST_SOCKET_DIR="$PWD/.local/codex-executor/catalog/ipc" \
 curl --fail --silent --show-error http://127.0.0.1:8080/ready
 ```
 
-The readiness endpoint responds with HTTP 204 when the API can reach the host executor. If the interface reports **Executor indisponível**, check that the executor is running and that Compose mounts its IPC directory. Then use **Verificar conexão**.
+The readiness endpoint responds with HTTP 204 when the API can reach the host executor. If the interface reports **Executor unavailable**, check that the executor is running and that Compose mounts its IPC directory. Then use **Check connection**.
 
-Open [Agent Lens](http://127.0.0.1:8080/). Select a disposable folder outside the Agent Lens repository, send a prompt, and open **Ver trajetória** on the turn. The executor can modify the selected files. The service binds to loopback. Keep prompts, command output, local captures and Codex state private when sharing screenshots or recordings.
+Open [Agent Lens](http://127.0.0.1:8080/). Select a disposable folder outside the Agent Lens repository, send a prompt, and open **View trajectory** on the turn. The executor can modify the selected files. The service binds to loopback. Keep prompts, command output, local captures and Codex state private when sharing screenshots or recordings.
 
 To stop the local application, run `docker compose down` at the repository root and stop the executor with Ctrl+C. Compose keeps the capture volume. The [optional observability setup](observability/README.md) describes logs and traces.
 

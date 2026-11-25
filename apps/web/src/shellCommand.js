@@ -2,7 +2,7 @@ const stepLimit = 64;
 const continuation = "\n    ";
 
 function tokenizeShellCommand(raw) {
-  const lexeme = /\s+|(&&|\|\||[|;])|(?:\\[^\r\n]|'[^']*'|"(?:\\[^\r\n]|[^"\\\x60$]|\$(?!\())*"|<workspace>|<global-instructions>|[^\s'"\\&|;(){}<>\x60])+/gy;
+  const lexeme = /\s+|(&&|\|\||[|;])|(?:\\[^\r\n]|'[^']*'|"(?:\\[^\r\n]|[^"\\\x60$]|\$(?!\())*"|<folder>|<global-instructions>|[^\s'"\\&|;(){}<>\x60])+/gy;
   const tokens = [];
   let depth = 0;
   for (let position = 0; position < raw.length; position = lexeme.lastIndex) {

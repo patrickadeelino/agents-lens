@@ -1,3 +1,5 @@
+import { t } from "./messages.js";
+
 // Identifiers for the event stream's connection state. Components compare these
 // identifiers; the visible text comes from connectionLabel() and may change freely.
 export const CONNECTION = Object.freeze({
@@ -9,17 +11,8 @@ export const CONNECTION = Object.freeze({
   ended: "ended",
 });
 
-const labels = {
-  [CONNECTION.idle]: "Inativa",
-  [CONNECTION.loading]: "Carregando histórico",
-  [CONNECTION.receiving]: "Ao vivo",
-  [CONNECTION.reconnecting]: "Reconectando…",
-  [CONNECTION.interrupted]: "Interrompida",
-  [CONNECTION.ended]: "Encerrado",
-};
-
 export function connectionLabel(state) {
-  return labels[state] ?? state;
+  return Object.values(CONNECTION).includes(state) ? t.connection[state] : state;
 }
 
 export function isDisrupted(state) {

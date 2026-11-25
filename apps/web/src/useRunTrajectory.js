@@ -1,6 +1,7 @@
 import { onUnmounted, ref, shallowRef } from "vue";
 import { loadRunHistory } from "./runs.js";
 import { savedOutcome, TrajectoryProjection } from "./trajectoryProjection.js";
+import { t } from "./messages.js";
 
 export function useRunTrajectory() {
   let projection = new TrajectoryProjection();
@@ -55,7 +56,7 @@ export function useRunTrajectory() {
       data.value = projection.snapshot();
       nextBefore.value = page.next_before;
     } catch {
-      if (!request.signal.aborted) historyError.value = "Falha ao carregar eventos anteriores. Tente novamente.";
+      if (!request.signal.aborted) historyError.value = t.pane.earlierFailed;
     } finally {
       if (earlierRequest === request) {
         earlierRequest = undefined;

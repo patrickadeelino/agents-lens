@@ -1,44 +1,20 @@
-const numbers = new Intl.NumberFormat("pt-BR");
-const seconds = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const offsets = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const eventLabels = new Map([
-  ["thread.started", "Sessão iniciada"],
-  ["turn.started", "Processamento do prompt iniciado"],
-  ["turn.completed", "Processamento do prompt concluído"],
-  ["turn.failed", "Processamento do prompt falhou"],
-  ["item.started", "Atividade iniciada"],
-  ["item.updated", "Atividade atualizada"],
-  ["item.completed", "Atividade encerrada"],
-  ["error", "Erro do Codex"],
-]);
-const itemLabels = new Map([
-  ["agent_message", "Mensagem do Codex"],
-  ["reasoning", "Resumo de raciocínio"],
-  ["todo_list", "Lista de tarefas"],
-  ["error", "Diagnóstico do Codex"],
-]);
+import { t } from "./messages.js";
+
+const numbers = new Intl.NumberFormat("en-US");
+const seconds = new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const offsets = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const eventLabels = new Map(Object.entries(t.events.types));
+const itemLabels = new Map(Object.entries(t.events.items));
 const lifecycleEvents = new Set(["thread.started", "turn.started", "turn.completed"]);
 const statuses = new Map([
-  ["in_progress", ["◌", "Em andamento"]],
-  ["completed", ["✓", "Concluído"]],
-  ["failed", ["×", "Falhou"]],
-  ["declined", ["×", "Recusado"]],
-  ["result_unconfirmed", ["?", "Não confirmado"]],
+  ["in_progress", ["◌", t.status.inProgress]],
+  ["completed", ["✓", t.status.completed]],
+  ["failed", ["×", t.status.failed]],
+  ["declined", ["×", t.status.declined]],
+  ["result_unconfirmed", ["?", t.status.actionUnconfirmed]],
 ]);
-const tokenLabels = new Map([
-  ["input_tokens", "Entrada"],
-  ["output_tokens", "Saída"],
-  ["cached_input_tokens", "Entrada em cache"],
-  ["cache_write_input_tokens", "Entrada gravada em cache"],
-  ["reasoning_output_tokens", "Raciocínio na saída"],
-]);
-const collaborationLabels = new Map([
-  ["spawn_agent", "Iniciar subagente"],
-  ["send_input", "Enviar mensagem ao subagente"],
-  ["wait", "Aguardar atualização de subagente"],
-  ["close_agent", "Encerrar subagente"],
-  ["resume_agent", "Retomar subagente"],
-]);
+const tokenLabels = new Map(Object.entries(t.tokens.fields));
+const collaborationLabels = new Map(Object.entries(t.tools.collaboration));
 
 export function formatDuration(ns) {
   if (!Number.isFinite(ns) || ns < 0) return null;
@@ -83,7 +59,7 @@ export function maskPaths(text, workspace = null) {
     ? workspace.replace(/\/+$/, "") : "";
   const escapedRoot = root.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
   const masked = root
-    ? text.replace(new RegExp("(^|[\\s\"'\x60=:(\\[<{>])" + escapedRoot + "(?=$|[/\\s\"'\x60,;:)\\]}>])", "g"), "$1<workspace>")
+    ? text.replace(new RegExp("(^|[\\s\"'\x60=:(\\[<{>])" + escapedRoot + "(?=$|[/\\s\"'\x60,;:)\\]}>])", "g"), "$1<folder>")
     : text;
   return masked.replace(/\/(?:home|Users)\/[\w.@+-]+/g, "~");
 }
@@ -101,11 +77,11 @@ export function statusPresentation(status) {
 }
 
 const branchStates = new Map([
-  ["running", "Em andamento"],
-  ["completed", "Concluído"],
-  ["failed", "Falhou"],
-  ["interrupted", "Interrompido"],
-  ["incomplete", "Captura incompleta"],
+  ["running", t.status.inProgress],
+  ["completed", t.status.completed],
+  ["failed", t.status.failed],
+  ["interrupted", t.status.interrupted],
+  ["incomplete", t.status.incompleteCapture],
 ]);
 
 export function branchStateLabel(state) {
@@ -153,7 +129,7 @@ export function errorMessage(event) {
 
 export function describeEvent(event, workspace) {
   const { item, type } = event;
-  const label = itemLabels.get(item?.type) ?? eventLabels.get(type) ?? "Evento do Codex";
+  const label = itemLabels.get(item?.type) ?? eventLabels.get(type) ?? t.events.fallback;
   const markdown = item?.type === "agent_message" && typeof item.text === "string"
     ? maskPaths(item.text, workspace) : null;
   const omitted = isOmittedMessage(markdown);
@@ -179,7 +155,7 @@ export function trajectoryRows(rows, view) {
   const visible = [];
   for (const entry of rows) {
     if (view !== "all" && (entry.startup || isEmptyMessageStart(entry))) continue;
-    const title = entry.startup ? "Inicialização e diagnósticos" : null;
+    const title = entry.startup ? t.common.startupGroup : null;
     if (!title && (view === "all" || !entry.technical)) {
       visible.push(entry);
       continue;
@@ -195,15 +171,15 @@ export function commandTitle(command) {
   if (typeof command !== "string") return null;
   // Interpret only exact forms with no shell expansion or secondary command.
   const simpleCommand = displayCommand(command);
-  const read = /^cat (?:-- )?((?:<workspace>\/)?[A-Za-z0-9_./~][A-Za-z0-9_./-]*|"[^"$\x60\\]+"|'[^']+')$/.exec(simpleCommand);
+  const read = /^cat (?:-- )?((?:<folder>\/)?[A-Za-z0-9_./~][A-Za-z0-9_./-]*|"[^"$\x60\\]+"|'[^']+')$/.exec(simpleCommand);
   if (read) {
     const file = read[1].replace(/^(['"])(.*)\1$/, "$2");
-    return `Ler ${file.split("/").filter(Boolean).at(-1) ?? file}`;
+    return t.commandTitles.read(file.split("/").filter(Boolean).at(-1) ?? file);
   }
-  if (/^ls(?:\s|$)/.test(simpleCommand)) return "Listar arquivos";
-  if (/^find(?:\s|$)/.test(simpleCommand)) return "Buscar arquivos";
-  if (/^(?:rg|grep)(?:\s|$)/.test(simpleCommand)) return "Buscar";
-  if (/^sed[ \t]+-n(?:\s|$)/.test(simpleCommand)) return "Ler trecho";
+  if (/^ls(?:\s|$)/.test(simpleCommand)) return t.commandTitles.list;
+  if (/^find(?:\s|$)/.test(simpleCommand)) return t.commandTitles.find;
+  if (/^(?:rg|grep)(?:\s|$)/.test(simpleCommand)) return t.commandTitles.search;
+  if (/^sed[ \t]+-n(?:\s|$)/.test(simpleCommand)) return t.commandTitles.excerpt;
   return null;
 }
 
@@ -218,10 +194,10 @@ export function tokenSummary(tokens) {
   const input = tokens.find(({ field }) => field === "input_tokens");
   const output = tokens.find(({ field }) => field === "output_tokens");
   if (input && output && Number.isSafeInteger(input.amount + output.amount)) {
-    return { value: numbers.format(input.amount + output.amount), label: "tokens · reportado pelo Codex" };
+    return { value: numbers.format(input.amount + output.amount), label: t.tokens.total };
   }
   const known = input ?? output;
-  return known ? { value: known.value, label: `tokens de ${known.label.toLowerCase()} · reportado pelo Codex` } : null;
+  return known ? { value: known.value, label: t.tokens.partial(known.label) } : null;
 }
 
 export function describeTool({ event }, previous) {
@@ -239,7 +215,7 @@ export function describeTool({ event }, previous) {
       break;
     case "web_search":
       fields = {
-        name: "Busca na web",
+        name: t.tools.webSearch,
         input: item.action ?? item.query,
         preview: item.query || null,
         output: item.results,
@@ -247,14 +223,14 @@ export function describeTool({ event }, previous) {
       break;
     case "file_change":
       fields = {
-        name: "Alteração de arquivos",
+        name: t.tools.fileChanges,
         input: item.changes,
         preview: item.changes?.[0]?.path,
       };
       break;
     case "collab_tool_call":
       fields = {
-        name: collaborationLabels.get(item.tool) ?? item.tool ?? "Interação com subagente",
+        name: collaborationLabels.get(item.tool) ?? item.tool ?? t.tools.subagent,
         input: item.prompt,
         output: item.agents_states,
       };
@@ -274,7 +250,7 @@ export function describeTool({ event }, previous) {
     || (output != null && previous.output != null && JSON.stringify(output) !== JSON.stringify(previous.output))
   ));
   return {
-    name: fields.name || previous?.name || "Ferramenta MCP",
+    name: fields.name || previous?.name || t.tools.mcp,
     input: fields.input ?? previous?.input,
     output,
     error: error ?? null,
