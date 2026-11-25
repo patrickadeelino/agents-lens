@@ -39,19 +39,19 @@ async function* readFrames(body) {
   }
 }
 
-export function streamPrompt(prompt, callbacks) {
-  return streamNewRun("/runs", prompt, callbacks);
+export function streamPrompt(prompt, callbacks, workspace) {
+  return streamNewRun("/runs", prompt, callbacks, workspace);
 }
 
 export function streamContinuation(runId, prompt, callbacks) {
   return streamNewRun(`/runs/${encodeURIComponent(runId)}/continue`, prompt, callbacks);
 }
 
-async function streamNewRun(url, prompt, { signal, onAccepted, onRecord }) {
+async function streamNewRun(url, prompt, { signal, onAccepted, onRecord }, workspace) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, workspace_id: workspace?.id, workspace_run_id: workspace?.runId }),
     signal,
   });
 
@@ -124,10 +124,6 @@ function readEventSource(url, { signal, onOpen, onRecord, onReconnect }) {
       settle(reject, new Error("Event stream interrupted"));
     });
   });
-}
-
-export function streamReplay(callbacks) {
-  return readEventSource("/events", callbacks);
 }
 
 export function streamSavedRun(runId, after, callbacks) {

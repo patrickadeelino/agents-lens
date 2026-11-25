@@ -35,6 +35,7 @@ class ThreadSummary:
     preview: str | None
     last_activity_at: datetime | None
     status: str
+    workspace: str | None
 
 
 @dataclass(frozen=True)
@@ -114,7 +115,7 @@ class Conversations:
         return ThreadDetail(thread_id, turns[0].run_id, latest.run_id,
                             preview(turns[0].prompt, 80) or "Conversa anterior",
                             preview(latest.prompt or latest.assistant_markdown, 140), max(dates, default=None),
-                            latest.status, turns, continuation)
+                            latest.status, session.workspace if session else None, turns, continuation)
 
     def list(self) -> list[ThreadSummary]:
         threads = [thread for root in self.store.roots() if (thread := self._project(root, details=False))]
@@ -125,7 +126,7 @@ class Conversations:
         threads.sort(key=lambda thread: thread.last_activity_at.timestamp() if thread.last_activity_at else float("-inf"),
                      reverse=True)
         return [ThreadSummary(t.thread_id, t.root_run_id, t.latest_run_id, t.title, t.preview,
-                              t.last_activity_at, t.status) for t in threads]
+                              t.last_activity_at, t.status, t.workspace) for t in threads]
 
     def by_run(self, run_id: str) -> ThreadDetail | None:
         capture = self.store.find(run_id)

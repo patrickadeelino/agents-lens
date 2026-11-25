@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 class RunSession(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     persistent: bool
+    workspace: str | None = None
     previous_run_id: str | None = None
     prompt: str | None = None
     submitted_at: datetime | None = None

@@ -1,4 +1,4 @@
-"""Configure the host Codex subprocess and its fixed writable catalog sandbox."""
+"""Configure the host Codex subprocess and the selected writable workspace."""
 
 import json
 import os
@@ -9,15 +9,19 @@ PROFILE = "agent-lens-catalog"
 
 
 @dataclass(frozen=True)
-class CatalogRun:
+class ExecutorConfig:
     binary: Path
-    workspace: Path
     state_dir: Path
     model: str
     api_key: str = field(repr=False)
 
+
+@dataclass(frozen=True, kw_only=True)
+class CatalogRun(ExecutorConfig):
+    workspace: Path
+
     def command(self) -> tuple[str, ...]:
-        workspace = json.dumps(str(self.workspace))
+        workspace = json.dumps(str(self.workspace), ensure_ascii=False)
         binary = json.dumps(str(self.binary))
         filesystem = f'{{":root" = "deny", ":minimal" = "read", {workspace} = "write", {binary} = "read"}}'
         return (

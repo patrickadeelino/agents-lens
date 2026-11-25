@@ -3,16 +3,16 @@
 import argparse
 import asyncio
 import json
-import shutil
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import aclosing, suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import UUID, uuid4
 
 import uvicorn
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from opentelemetry.trace import Span
 
 from src.api.observability import observed_app
@@ -22,13 +22,14 @@ from src.infrastructure.app_server import (
     AppServerRejected,
     AppServerTurn,
 )
-from src.infrastructure.catalog_run import CatalogRun
+from src.infrastructure.catalog_run import CatalogRun, ExecutorConfig
 from src.infrastructure.executor_protocol import (
     SESSION_PERSISTENCE_HEADER,
     ExecutorRequest,
     RunError,
     RunExit,
     RunOutput,
+    WorkspaceSelection,
 )
 from src.observability import (
     EventProgress,
@@ -44,6 +45,85 @@ app = observed_app(
     "Agent Lens Executor", "agent-lens-executor", {("POST", "/run"): "executor.http"}, private=True,
 )
 execution_lock = asyncio.Lock()
+picker_lock = asyncio.Lock()
+workspace_selections: dict[UUID, Path] = {}
+
+
+def configured_run() -> ExecutorConfig:
+    run = getattr(app.state, "catalog_run", None)
+    if not isinstance(run, ExecutorConfig):
+        event_log("executor.rejected", "executor", "rejected", error_code="executor_unconfigured")
+        raise HTTPException(status_code=503, detail="Executor is not configured.")
+    return run
+
+
+def checked_workspace(path: Path, run: ExecutorConfig) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+        if not resolved.is_dir():
+            raise ValueError("Workspace is not a directory.")
+    except (OSError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=409, detail="Workspace directory is unavailable.") from error
+    for private in (run.state_dir, run.state_dir.parent / "ipc"):
+        if resolved.is_relative_to(private) or private.is_relative_to(resolved):
+            raise HTTPException(status_code=409, detail="Workspace overlaps private executor files.")
+    return resolved
+
+
+def confirmed_workspace(path: Path, run: ExecutorConfig) -> Path:
+    if checked_workspace(path, run) != path:
+        raise HTTPException(status_code=409, detail="Workspace directory changed.")
+    return path
+
+
+async def pick_directory() -> Path | None:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "/usr/bin/zenity", "--file-selection", "--directory", "--title=Selecionar pasta no Agent Lens",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as error:
+        raise HTTPException(status_code=503, detail="Native folder picker is unavailable.") from error
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+    except (TimeoutError, asyncio.CancelledError):
+        with suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+        raise
+    if process.returncode == 1 and not stdout and not stderr:
+        return None
+    if process.returncode or not stdout:
+        raise HTTPException(status_code=503, detail="Native folder picker did not return a directory.")
+    return Path(stdout.decode().removesuffix("\n"))
+
+
+@app.post("/workspace-picker", response_model=WorkspaceSelection)
+async def select_workspace() -> WorkspaceSelection | Response:
+    run = configured_run()
+    if picker_lock.locked():
+        raise HTTPException(status_code=409, detail="A folder picker is already open.")
+    async with picker_lock:
+        try:
+            path = await pick_directory()
+        except TimeoutError as error:
+            raise HTTPException(status_code=408, detail="Folder selection timed out.") from error
+        if path is None:
+            return Response(status_code=204)
+        resolved = checked_workspace(path, run)
+        selection = uuid4()
+        if len(workspace_selections) >= 128:
+            del workspace_selections[next(iter(workspace_selections))]
+        workspace_selections[selection] = resolved
+        return WorkspaceSelection(id=selection, path=str(resolved))
+
+
+@app.get("/workspaces/{selection_id}")
+def get_workspace(selection_id: UUID) -> WorkspaceSelection:
+    path = workspace_selections.get(selection_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Workspace selection expired.")
+    return WorkspaceSelection(id=selection_id, path=str(confirmed_workspace(path, configured_run())))
 
 
 async def stream_process(run: CatalogRun, request: ExecutorRequest) -> AsyncGenerator[str]:
@@ -152,10 +232,11 @@ async def app_server_messages(
 
 @app.post("/run", response_class=StreamingResponse)
 async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
-    run = getattr(app.state, "catalog_run", None)
-    if not isinstance(run, CatalogRun):
-        event_log("executor.rejected", "executor", "rejected", error_code="executor_unconfigured")
-        raise HTTPException(status_code=503, detail="Read-only executor is not configured.")
+    config = configured_run()
+    run = CatalogRun(
+        binary=config.binary, state_dir=config.state_dir, model=config.model, api_key=config.api_key,
+        workspace=confirmed_workspace(Path(request.workspace), config),
+    )
     return ClosingStreamingResponse(
         stream_process(run, request),
         media_type="application/x-ndjson",
@@ -164,17 +245,16 @@ async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Start the host Catalog API executor on its fixed Unix socket.")
+    parser = argparse.ArgumentParser(description="Start the host executor on its private Unix socket.")
     parser.add_argument("--codex-bin", required=True, type=Path)
     parser.add_argument("--model", required=True)
     args = parser.parse_args()
     key = sys.stdin.readline().strip()
     if not key or not key.isascii() or any(char.isspace() for char in key):
         parser.error("Provide the Codex API key via standard input.")
-    workspace, state_dir, socket = prepare_catalog_lab(Path(__file__).resolve().parents[2])
-    app.state.catalog_run = CatalogRun(
+    state_dir, socket = prepare_executor_dirs(Path(__file__).resolve().parents[2])
+    app.state.catalog_run = ExecutorConfig(
         binary=args.codex_bin.resolve(strict=True),
-        workspace=workspace,
         state_dir=state_dir,
         model=args.model,
         api_key=key,
@@ -182,24 +262,22 @@ def main() -> None:
     uvicorn.run(app, uds=str(socket), access_log=False)
 
 
-def prepare_catalog_lab(project: Path) -> tuple[Path, Path, Path]:
+def prepare_executor_dirs(project: Path) -> tuple[Path, Path]:
     project = project.resolve(strict=True)
     lab = project / ".local" / "codex-executor" / "catalog"
-    workspace, state, ipc = (lab / name for name in ("workspace", "state", "ipc"))
-    for path in (lab, workspace, state, ipc):
+    state, ipc = lab / "state", lab / "ipc"
+    for path in (lab, state, ipc):
         if path.resolve() != path:
-            raise ValueError("Catalog lab paths must not contain symlinks.")
+            raise ValueError("Executor paths must not contain symlinks.")
     lab.mkdir(mode=0o700, parents=True, exist_ok=True)
     state.mkdir(mode=0o700, exist_ok=True)
     ipc.mkdir(mode=0o700, exist_ok=True)
     # The backend container uses a different UID and mounts only this directory.
     ipc.chmod(0o711)
-    if not workspace.exists():
-        shutil.copytree(project / "examples" / "catalog-api", workspace)
     socket = ipc / "executor.sock"
     if socket.is_symlink():
         raise ValueError("Executor socket must not be a symlink.")
-    return workspace.resolve(strict=True), state.resolve(strict=True), socket
+    return state.resolve(strict=True), socket
 
 
 if __name__ == "__main__":

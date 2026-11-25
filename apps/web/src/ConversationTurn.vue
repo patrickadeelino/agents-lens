@@ -24,7 +24,7 @@ const html = computed(() => expanded.value && reply.value ? renderAgentMarkdown(
 const preview = computed(() => reply.value?.replace(/!?\[([^\]]+)\]\([^)]*\)/g, "$1")
   .replace(/(^|\n)[#>]+\s*/g, "$1").replace(/[*`]/g, "").replace(/\s+/g, " ").trim());
 const replyId = useId();
-const expanded = ref(false);
+const expanded = ref(true);
 const status = computed(() => ({
   active: props.live ? "Em andamento · ao vivo" : "Em andamento", completed: "Concluído", failed: "Falhou", unconfirmed: "Resultado não confirmado",
 })[props.turn.status] ?? "Estado indisponível");
@@ -35,14 +35,28 @@ const status = computed(() => ({
   <li class="turn-card" :class="{ 'turn-selected': selected }" :data-turn-run="turn.run_id" :data-turn-status="status">
     <article :aria-label="`Turno ${number}`">
       <header class="turn-card-meta">
-        <h2>Turno {{ number }}</h2>
-        <time v-if="time" :datetime="timestamp">{{ time }}</time>
+        <h2>Turno {{ number }}<template v-if="time"> · <time :datetime="timestamp">{{ time }}</time></template></h2>
+        <div class="turn-card-controls">
+          <button type="button" class="secondary compact-button inspect-turn" :aria-controls="selected ? 'trajectory-pane' : undefined"
+            :aria-expanded="selected" :aria-label="selected ? `Turno ${number} em inspeção` : `Ver trajetória do turno ${number}`"
+            @click="$emit('inspect', turn.run_id)">
+            <span v-if="selected" class="selected-dot" aria-hidden="true"></span>
+            {{ selected ? "Em inspeção" : "Ver trajetória" }}
+            <svg v-if="!selected" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></svg>
+          </button>
+        </div>
       </header>
       <p class="turn-prompt">{{ turn.prompt ?? "Mensagem original indisponível" }}</p>
       <p v-if="!reply" class="turn-reply-preview">{{ activity || (turn.status === 'active' ? 'Aguardando resposta…' : 'Resposta indisponível.') }}</p>
-      <button v-if="reply" type="button" class="link-button reply-toggle" :class="{ 'turn-reply-preview': !expanded }" :aria-label="expanded ? undefined : `Ler resposta completa do turno ${number}`" :aria-controls="replyId"
-        :aria-expanded="expanded" @click="expanded = !expanded">{{ expanded ? "Recolher resposta" : preview || "Ler resposta completa" }}</button>
-      <div v-if="reply" :id="replyId" v-show="expanded" class="agent-message turn-reply" v-html="html"></div>
+      <div v-else class="turn-response">
+        <div class="turn-response-header">
+          <h3>Resposta do Codex</h3>
+          <button type="button" class="link-button reply-toggle" :aria-controls="replyId" :aria-expanded="expanded"
+            @click="expanded = !expanded">{{ expanded ? "Recolher resposta" : "Mostrar resposta" }}</button>
+        </div>
+        <p v-if="!expanded && preview" class="turn-reply-preview">{{ preview }}</p>
+        <div :id="replyId" v-show="expanded" class="agent-message turn-reply" v-html="html"></div>
+      </div>
       <footer class="turn-card-footer">
         <div class="turn-state-group">
           <span class="turn-state" :data-state="turn.status">
@@ -56,13 +70,6 @@ const status = computed(() => ({
           <span v-if="observed?.files?.length" class="turn-action-count">{{ observed.files.length }} {{ observed.files.length === 1 ? "arquivo alterado" : "arquivos alterados" }}</span>
           <span v-if="observed?.failures" class="turn-failure-count">{{ observed.failures }} {{ observed.failures === 1 ? "falha" : "falhas" }}</span>
         </div>
-        <button type="button" class="link-button inspect-turn" :aria-controls="selected ? 'trajectory-pane' : undefined"
-          :aria-expanded="selected" :aria-label="selected ? `Turno ${number} em inspeção` : `Ver trajetória do turno ${number}`"
-          @click="$emit('inspect', turn.run_id)">
-          <span v-if="selected" class="selected-dot" aria-hidden="true"></span>
-          {{ selected ? "Em inspeção" : "Ver trajetória" }}
-          <svg v-if="!selected" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></svg>
-        </button>
       </footer>
     </article>
   </li>

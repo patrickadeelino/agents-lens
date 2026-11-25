@@ -5,21 +5,25 @@ from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from time import monotonic_ns
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+import httpx
+from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import Response, StreamingResponse
 from opentelemetry.trace import INVALID_SPAN, Span, use_span
 from starlette.requests import ClientDisconnect
 from starlette.types import Send
 
 from src.api.dependencies import (
     PromptCapture,
+    executor_socket,
     get_continuation_capture,
     get_prompt_capture,
 )
 from src.api.sse import end_frame, record_frame
 from src.application.capture_run import CaptureResult, CaptureRun, FlushedRecord
+from src.infrastructure.executor_client import ExecutorClient
+from src.infrastructure.executor_protocol import WorkspaceSelection
 from src.observability import (
     EventProgress,
     Outcome,
@@ -119,6 +123,18 @@ def accepted_run(run: PromptCapture) -> StreamingResponse:
     response = RunStreamingResponse(run.capture)
     response.headers["X-Run-ID"] = run.run_id
     return response
+
+
+@router.post("/workspace-picker", response_model=WorkspaceSelection)
+def select_workspace(x_agent_lens: Annotated[Literal["workspace-picker"], Header()]) -> WorkspaceSelection | Response:
+    try:
+        selection = ExecutorClient(executor_socket()).select_workspace()
+    except httpx.HTTPStatusError as error:
+        detail = error.response.json().get("detail")
+        raise HTTPException(status_code=error.response.status_code, detail=detail) from error
+    except (httpx.RequestError, ValueError) as error:
+        raise HTTPException(status_code=503, detail="Seletor de pastas indisponível.") from error
+    return selection if selection else Response(status_code=204)
 
 
 @router.post("/runs", response_class=StreamingResponse, responses=RUN_RESPONSE)

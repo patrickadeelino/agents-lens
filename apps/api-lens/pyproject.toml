@@ -35,10 +35,10 @@ max-complexity = 6
 
 [tool.mypy]
 python_version = "3.13"
-files = ["app.py", "executor.py", "src", "scripts", "tests"]
+files = ["app.py", "executor.py", "src", "tests"]
 check_untyped_defs = true
 warn_unused_ignores = true
 
 [tool.coverage.run]
 branch = true
-source = ["app", "executor", "src", "scripts"]
+source = ["app", "executor", "src"]

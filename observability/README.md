@@ -1,6 +1,6 @@
 # Local observability
 
-Agent Lens writes structured operational logs to stderr for live runs and replay. The optional `observability` profile in `compose.yaml` sends logs and spans via OTLP/HTTP to the OpenTelemetry Collector, which batches and forwards them to OpenObserve OSS.
+Agent Lens writes structured operational logs to stderr for live runs. The optional `observability` profile in `compose.yaml` sends logs and spans via OTLP/HTTP to the OpenTelemetry Collector, which batches and forwards them to OpenObserve OSS.
 
 ## Start the stack
 

@@ -14,3 +14,24 @@ export function inspectionUrl(currentUrl, selectedRunId, provisionalRunId = null
   url.hash = "";
   return url;
 }
+
+export function workspaceName(path) {
+  return path.split("/").filter(Boolean).at(-1) || path;
+}
+
+export function groupConversations(threads) {
+  const groups = new Map();
+  for (const thread of threads) {
+    const path = thread.workspace || null;
+    if (!groups.has(path)) {
+      groups.set(path, {
+        path,
+        name: path ? workspaceName(path) : "Conversas anteriores",
+        runId: thread.root_run_id,
+        threads: [],
+      });
+    }
+    groups.get(path).threads.push(thread);
+  }
+  return [...groups.values()];
+}

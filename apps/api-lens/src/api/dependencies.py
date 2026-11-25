@@ -5,30 +5,27 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from time import monotonic
 from typing import Annotated
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException
 from fastapi import Path as PathParam
 
 from src.application.capture import EventCapture
 from src.application.capture_run import CaptureRun
 from src.application.conversations import Conversations
-from src.application.replay import InvalidReplayOffsets, TimedReplay
 from src.application.run_continuation import RunSession, describe_continuation
 from src.application.run_history import GetRunHistory
 from src.application.run_subscription import SubscribeToRun
-from src.domain.trace_reader import read_timed_trace
 from src.infrastructure.capture_files import CaptureFiles
 from src.infrastructure.conversation_store import ConversationStore
 from src.infrastructure.executor_client import ExecutorClient
-from src.observability import bind_run_id, event_log, finish_span, operation_span
+from src.observability import bind_run_id, event_log
 
-from .schemas import PromptRequest
+from .schemas import NewPromptRequest, PromptRequest
 
 PROJECT_DIR = Path(__file__).resolve().parents[4]
-REPLAY_TRACE = PROJECT_DIR / "examples" / "traces" / "readme-run.timed.sanitized.jsonl"
 CAPTURE_ROOT = PROJECT_DIR / ".captures"
 RunIdPath = Annotated[str, PathParam(pattern=r"^[A-Za-z0-9_-]{1,128}$")]
 
@@ -41,44 +38,53 @@ def get_run_subscription() -> SubscribeToRun:
     return SubscribeToRun(partial(CaptureFiles.find, CAPTURE_ROOT))
 
 
-def get_replay() -> TimedReplay:
-    """Prepare the sanitized example before starting the HTTP response."""
-    started_at = monotonic()
-    with operation_span("replay.load") as span:
-        try:
-            with REPLAY_TRACE.open(encoding="utf-8") as trace:
-                records = tuple(read_timed_trace(trace))
-            replay = TimedReplay(records)
-        except (OSError, ValueError) as error:
-            code = "replay_unavailable" if isinstance(error, OSError) else "replay_invalid"
-            detail = (
-                str(error) if isinstance(error, InvalidReplayOffsets)
-                else "Replay trace is unavailable."
-            )
-            finish_span(span, "failed", error_code=code)
-            event_log("replay.load.failed", "replay", "failed", error_code=code, started_at=started_at)
-            raise HTTPException(status_code=503, detail=detail) from error
-        finish_span(span, "completed")
-        event_log("replay.load.completed", "replay", "completed", started_at=started_at)
-        return replay
-
-
 @dataclass(frozen=True)
 class PromptCapture:
     run_id: str
     capture: CaptureRun
 
 
-def get_prompt_capture(request: PromptRequest) -> PromptCapture:
+def get_prompt_capture(request: NewPromptRequest) -> PromptCapture:
     socket = executor_socket()
-    output = create_capture(request.prompt)
-    return prepare_capture(request.prompt, socket, output)
+    if request.workspace_id is not None:
+        workspace = selected_workspace(socket, request.workspace_id)
+    elif request.workspace_run_id is not None:
+        workspace = saved_workspace(request.workspace_run_id)
+    else:
+        raise HTTPException(status_code=422, detail="Selecione uma pasta para iniciar a conversa.")
+    output = create_capture(request.prompt, workspace=workspace)
+    return prepare_capture(request.prompt, socket, output, workspace=workspace)
+
+
+def saved_workspace(run_id: str) -> str:
+    try:
+        session = CaptureFiles.find(CAPTURE_ROOT, run_id).read_session()
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Conversa não encontrada.") from error
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=503, detail="Histórico indisponível.") from error
+    if session is None or not session.workspace:
+        raise HTTPException(status_code=409, detail="Selecione a pasta para iniciar uma conversa.")
+    return session.workspace
+
+
+def selected_workspace(socket: str, selection_id: UUID) -> str:
+    try:
+        return ExecutorClient(socket).workspace(selection_id)
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(status_code=409, detail="Selecione a pasta novamente.") from error
+    except (httpx.RequestError, ValueError) as error:
+        raise HTTPException(status_code=503, detail="Executor indisponível.") from error
 
 
 def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> PromptCapture:
     origin, thread_id = resumable_capture(run_id)
     socket = executor_socket()
-    output = create_capture(request.prompt, previous_run_id=run_id)
+    session = origin.read_session()
+    if session is None or not session.workspace:
+        raise HTTPException(status_code=409, detail="Esta conversa não tem uma pasta registrada.")
+    workspace = session.workspace
+    output = create_capture(request.prompt, previous_run_id=run_id, workspace=workspace)
     try:
         origin.reserve_successor(output)
     except FileExistsError as error:
@@ -87,7 +93,7 @@ def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> Promp
     except OSError as error:
         output.discard_unpublished()
         raise HTTPException(status_code=503, detail="Capture directory is unavailable.") from error
-    return prepare_capture(request.prompt, socket, output, thread_id=thread_id)
+    return prepare_capture(request.prompt, socket, output, thread_id=thread_id, workspace=workspace)
 
 
 def resumable_capture(run_id: str) -> tuple[CaptureFiles, UUID]:
@@ -117,11 +123,14 @@ def executor_socket() -> str:
     return socket
 
 
-def create_capture(prompt: str, *, previous_run_id: str | None = None) -> CaptureFiles:
+def create_capture(
+    prompt: str, *, workspace: str, previous_run_id: str | None = None,
+) -> CaptureFiles:
     try:
         output = CaptureFiles.create(CAPTURE_ROOT, prefix="codex-prompt-")
         output.write_session(RunSession(
-            persistent=True, previous_run_id=previous_run_id, prompt=prompt, submitted_at=datetime.now(UTC),
+            persistent=True, previous_run_id=previous_run_id, prompt=prompt,
+            submitted_at=datetime.now(UTC), workspace=workspace,
         ))
     except OSError as error:
         event_log("run.rejected", "api", "rejected", error_code="capture_unavailable")
@@ -130,10 +139,10 @@ def create_capture(prompt: str, *, previous_run_id: str | None = None) -> Captur
 
 
 def prepare_capture(
-    prompt: str, socket: str, output: CaptureFiles, *, thread_id: UUID | None = None,
+    prompt: str, socket: str, output: CaptureFiles, *, workspace: str, thread_id: UUID | None = None,
 ) -> PromptCapture:
     bind_run_id(output.directory.name)
     event_log("run.accepted", "api", "accepted")
-    execute = partial(ExecutorClient(socket).run, thread_id=thread_id)
+    execute = partial(ExecutorClient(socket).run, thread_id=thread_id, workspace=workspace)
     capture = CaptureRun(prompt, execute, EventCapture(), output, expected_thread=thread_id)
     return PromptCapture(output.directory.name, capture)

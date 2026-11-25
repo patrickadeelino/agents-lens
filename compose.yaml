@@ -15,7 +15,7 @@ services:
     environment:
       AGENT_LENS_OTEL_ENABLED: "${AGENT_LENS_OTEL_ENABLED:-0}"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-      AGENT_LENS_EXECUTOR_SOCKET: "${AGENT_LENS_HOST_SOCKET_DIR:+/executor-ipc/executor.sock}"
+      AGENT_LENS_EXECUTOR_SOCKET: "/executor-ipc/executor.sock"
     volumes:
       - type: bind
         source: ./apps/api-lens
@@ -24,7 +24,7 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ${AGENT_LENS_HOST_SOCKET_DIR:-./examples/empty-executor-ipc}
+        source: ${AGENT_LENS_HOST_SOCKET_DIR:-./.local/codex-executor/catalog/ipc}
         target: /executor-ipc
         read_only: true
         bind:

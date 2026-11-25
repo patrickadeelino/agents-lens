@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from "vue";
 import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSummary, isEssential, visibleTrajectoryRows } from "./eventPresentation.js";
 import { actionCallId, flattenTrajectory, observedFileChanges } from "./trajectoryProjection.js";
 import TrajectoryList from "./TrajectoryList.vue";
@@ -24,10 +24,16 @@ const props = defineProps({
   linkedCall: String,
   initialScroll: { type: Number, default: 0 },
   focusOnOpen: Boolean,
-  replay: Boolean,
   closeable: Boolean,
 });
-const emit = defineEmits(["close", "active-turn", "call", "retry", "retry-history", "scroll", "announce", "replay"]);
+const promptExpanded = ref(false);
+const promptId = useId();
+const promptPreview = computed(() => {
+  const characters = Array.from(props.prompt ?? "");
+  return characters.length > 150 ? characters.slice(0, 150).join("") + "..." : null;
+});
+
+const emit = defineEmits(["close", "active-turn", "call", "retry", "retry-history", "scroll", "announce"]);
 const heading = ref(null);
 const viewport = ref(null);
 const timeline = ref(null);
@@ -49,7 +55,7 @@ const liveBranches = ref(new Set());
 const flat = computed(() => flattenTrajectory(data.value.rows));
 const visible = computed(() => visibleTrajectoryRows(data.value.rows, filter.value));
 watch(data, (current, previous) => {
-  if (!previous || !props.active || props.replay) return;
+  if (!previous || !props.active) return;
   const known = new Set(flattenTrajectory(previous.rows).filter((row) => row.branch).map((row) => row.key));
   for (const row of flat.value) {
     if (row.branch && !known.has(row.key) && row.observedAt >= (previous.lastOffset ?? 0)) {
@@ -83,7 +89,7 @@ function showEvidence(itemId) {
 const files = computed(() => observedFileChanges(data.value.actions, data.value.workspace));
 const expanded = computed(() => {
   if (props.linkedCall) return flat.value.find((entry) => actionCallId(entry) === props.linkedCall)?.key;
-  if (manuallySelected.value || props.active || props.replay) return selected.value;
+  if (manuallySelected.value || props.active) return selected.value;
   return data.value.failures[0]?.key;
 });
 const duration = computed(() => {
@@ -94,8 +100,7 @@ const duration = computed(() => {
     ? observedRunDuration(data.value.firstOffset, data.value.lastOffset, liveElapsed) : null;
 });
 const switchToActive = computed(() => !props.active && props.activeTurnNumber != null);
-const headingText = computed(() => props.replay ? "Replay de exemplo"
-  : props.turnNumber != null ? `Trajetória · Turno ${props.turnNumber}` : "Trajetória");
+const headingText = computed(() => props.turnNumber != null ? `Trajetória · Turno ${props.turnNumber}` : "Trajetória");
 const hasObservedActions = computed(() => props.summary ? actions.value != null : data.value.actions.length > 0
   || (data.value.terminal && data.value.rows.length > 0 && nextBefore.value == null));
 const index = computed(() => flat.value.filter((entry) => (entry.command || entry.tool)
@@ -264,7 +269,6 @@ onUnmounted(() => {
       <button v-if="closeable" type="button" class="link-button trajectory-close" @click="$emit('close')">
         Fechar <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
       </button>
-      <button v-if="replay" type="button" class="secondary compact-button" @click="$emit('replay')">Reiniciar</button>
     </header>
 
     <div v-if="switchToActive" class="active-context">
@@ -280,18 +284,20 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-else-if="active && !replay && activeTurnNumber" class="active-context">
+    <div v-else-if="active && activeTurnNumber" class="active-context">
       <p><span class="turn-state-dot" aria-hidden="true"></span> Ao vivo · {{ following ? "seguindo" : "inspecionando" }} o turno {{ activeTurnNumber }}</p>
       <button type="button" class="secondary compact-button" @click="followLatest">↓ Ir ao último evento</button>
     </div>
 
     <div ref="viewport" class="trajectory-scroll" @scroll.passive="onScroll">
       <div class="trajectory-context">
-        <p v-if="replay" class="quiet-text">Replay de eventos gravados e sanitizados. Sem chamada de modelo.</p>
-        <details v-if="prompt" class="trajectory-prompt-disclosure">
-          <summary><span>Mostrar prompt</span><span>Ocultar prompt</span></summary>
-          <p class="trajectory-prompt">{{ prompt }}</p>
-        </details>
+        <div v-if="prompt" class="trajectory-prompt-disclosure">
+          <button v-if="promptPreview" type="button" class="trajectory-prompt-toggle"
+            :aria-controls="promptId" :aria-expanded="promptExpanded"
+            :aria-label="promptExpanded ? 'Mostrar prévia do prompt' : 'Mostrar prompt completo'"
+            @click="promptExpanded = !promptExpanded"></button>
+          <p :id="promptId" class="trajectory-prompt">{{ promptExpanded ? prompt : promptPreview ?? prompt }}</p>
+        </div>
         <div v-if="connection === 'Reconectando…' || connection === 'Interrompida'" class="connection-notice">
           <p role="status">
             {{ connection === 'Reconectando…' ? 'Conexão perdida. Tentando reconectar.' : 'Fluxo interrompido. Os eventos exibidos permanecem disponíveis.' }}
@@ -300,18 +306,22 @@ onUnmounted(() => {
           <button v-if="runId" type="button" class="secondary" @click="$emit('retry')">Tentar agora</button>
         </div>
         <p v-else-if="recovered != null" class="quiet-text" role="status">Reconectado · {{ recovered }} {{ recovered === 1 ? "evento recebido" : "eventos recebidos" }}</p>
-        <dl class="trajectory-metrics">
-          <div v-if="status"><dt>{{ active && connection ? connection : replay ? "Estado do replay" : "Estado do turno" }}</dt><dd>{{ status }}</dd></div>
-          <div v-if="duration"><dt>{{ partial ? "Duração · trecho observado" : "Duração · medida pelo app" }}</dt><dd>{{ duration }}</dd></div>
-          <div v-if="tokens"><dt>{{ tokens.label }}</dt><dd>{{ tokens.value }}</dd><dd v-if="tokenDetails.length > 1" class="token-details-cell"><details v-if="tokenDetails.length > 1" class="token-breakdown">
-          <summary>Detalhar tokens</summary>
-          <dl><div v-for="token in tokenDetails" :key="token.field"><dt>{{ token.label }}</dt><dd>{{ token.value }}</dd></div></dl>
-        </details></dd></div>
-          <div v-if="hasObservedActions">
-            <dt>{{ partial ? "Trecho carregado" : active ? "Observadas até agora" : "Observadas" }}</dt>
-            <dd>{{ actions }} {{ actions === 1 ? "ação" : "ações" }}<template v-if="failures != null && (failures || (!active && !partial))"> · {{ failures }} {{ failures === 1 ? "falha" : "falhas" }}</template></dd>
-          </div>
-        </dl>
+        <div class="trajectory-metric-summary">
+          <dl class="trajectory-metrics">
+            <div v-if="status"><dt>{{ active && connection ? connection : "Estado do turno" }}</dt><dd>{{ status }}</dd></div>
+            <div v-if="duration"><dt>{{ partial ? "Duração · trecho observado" : "Duração · medida pelo app" }}</dt><dd>{{ duration }}</dd></div>
+            <div v-if="hasObservedActions">
+              <dt>{{ partial ? "Trecho carregado" : active ? "Observadas até agora" : "Observadas" }}</dt>
+              <dd>{{ actions }} {{ actions === 1 ? "ação" : "ações" }}<template v-if="failures != null && (failures || (!active && !partial))"> · {{ failures }} {{ failures === 1 ? "falha" : "falhas" }}</template></dd>
+            </div>
+          </dl>
+          <dl v-if="tokens || tokenDetails.length" class="trajectory-tokens" aria-label="Uso de tokens">
+            <div v-if="tokens"><dt>{{ tokens.label }}</dt><dd>{{ tokens.value }}</dd></div>
+            <template v-if="tokenDetails.length > 1 || !tokens">
+              <div v-for="token in tokenDetails" :key="token.field"><dt>{{ token.label }}</dt><dd>{{ token.value }}</dd></div>
+            </template>
+          </dl>
+        </div>
         <p v-if="detail" class="trajectory-state-note">{{ detail }}</p>
         <div v-if="summary?.files.length || summary?.tests.length || files.length" class="trajectory-highlights">
         <section v-if="summary?.files.length" class="file-highlights" aria-label="Arquivos alterados observados">
@@ -383,9 +393,6 @@ onUnmounted(() => {
       <p v-else-if="!loading && !error && !data.rows.length" class="pane-notice" role="status">
         {{ active ? "Aguardando os primeiros eventos." : "Nenhum evento disponível para este turno." }}
       </p>
-    </div>
-    <div v-if="replay && !following && data.rows.length" class="trajectory-footer">
-      <button type="button" class="secondary compact-button" @click="followLatest">Ir ao último evento <span aria-hidden="true">↓</span></button>
     </div>
   </aside>
 </template>

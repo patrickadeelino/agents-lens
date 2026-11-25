@@ -61,7 +61,7 @@ test("file highlights require observed successful changes and preserve their sou
 });
 
 test("projects the real sanitized delegation without adding child actions to parent totals", () => {
-  const source = new URL("../../../examples/traces/catalog-delegation.timed.sanitized.jsonl", import.meta.url);
+  const source = new URL("./fixtures/catalog-delegation.timed.sanitized.jsonl", import.meta.url);
   const projection = new TrajectoryProjection();
   const events = readFileSync(source, "utf8").trim().split("\n").map(JSON.parse);
   events.forEach((value, index) => projection.append(value, index + 1));

@@ -5,8 +5,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from .trace_events import TraceEvent
-from .trace_reader import TraceRecord
+from .trace_events import TimedEvent, TraceEvent
 
 
 class CommandItem(BaseModel):
@@ -57,7 +56,7 @@ class CommandExecutions:
         self.by_id: dict[str, CommandExecutionState] = {}
         self._retain_output = retain_output
 
-    def observe(self, record: TraceRecord) -> CommandExecutionState | None:
+    def observe(self, record: TimedEvent) -> CommandExecutionState | None:
         item = CommandItem.from_event(record.event)
         if item is None:
             return None

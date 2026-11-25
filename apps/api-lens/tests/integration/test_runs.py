@@ -344,10 +344,19 @@ def run_config(run_workspace: Path) -> CatalogRun:
     stub = run_workspace / "fake-codex"
     stub.write_text(f"#!{sys.executable}\n" + PROBE, encoding="utf-8")
     stub.chmod(0o700)
+    state = run_workspace / "state"
+    state.mkdir()
     return CatalogRun(
-        binary=stub, state_dir=run_workspace, workspace=example,
+        binary=stub, state_dir=state, workspace=example,
         model="test-model", api_key="not-a-real-key",
     )
+
+
+WORKSPACE_ID = UUID("17e080e0-d42b-49d2-bbbc-18bd7cdcaa11")
+
+
+def prompt_body(prompt: str) -> dict[str, str]:
+    return {"prompt": prompt, "workspace_id": str(WORKSPACE_ID)}
 
 
 @pytest.fixture
@@ -356,6 +365,7 @@ def executor_socket(
 ) -> Iterator[Path]:
     unix_path = run_workspace / "executor.sock"
     monkeypatch.setattr(executor_app.state, "catalog_run", run_config, raising=False)
+    monkeypatch.setattr(executor, "workspace_selections", {WORKSPACE_ID: run_config.workspace})
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(unix_path))
     with running_server(executor_app, Event(), unix_path=unix_path):
         yield unix_path
@@ -382,7 +392,7 @@ def test_run_stream_bridges_history_and_live_capture(
     live_http: tuple[httpx.Client, Event], run_workspace: Path,
 ) -> None:
     backend, _ = live_http
-    with backend.stream("POST", "/runs", json={"prompt": "stream across reconnect"}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("stream across reconnect")) as response:
         assert response.status_code == 200
         run_id = response.headers["X-Run-ID"]
         original = response.iter_lines()
@@ -395,7 +405,7 @@ def test_run_stream_bridges_history_and_live_capture(
     assert history.status_code == 200
     assert history.json()["latest_event_id"] == 33
     assert backend.post(run_url + "/continue", json={"prompt": "continue now"}).status_code == 409
-    (run_workspace / "emit-34").touch()
+    (run_workspace / "state" / "emit-34").touch()
 
     trace = directory / "events.timed.jsonl"
     deadline = monotonic() + 3
@@ -414,7 +424,7 @@ def test_run_stream_bridges_history_and_live_capture(
             "type": "item.completed", "item": {"type": "agent_message", "id": "item_34", "text": "34"},
         })
 
-        (run_workspace / "emit-35").touch()
+        (run_workspace / "state" / "emit-35").touch()
         assert next(frames) == "id: 35"
         kind, record = next_frame(frames)
         assert (kind, record["event"]) == ("record", {
@@ -422,7 +432,7 @@ def test_run_stream_bridges_history_and_live_capture(
         })
         assert not (directory / "result.json").exists()
 
-        (run_workspace / "finish-run").touch()
+        (run_workspace / "state" / "finish-run").touch()
         assert next(frames) == "id: 36"
         assert next_frame(frames)[1]["event"] == {"type": "turn.completed"}
         assert next_frame(frames) == ("end", {"exit_code": 0})
@@ -437,7 +447,7 @@ def test_run_stream_bridges_history_and_live_capture(
 def test_latest_run_resumes_the_thread_once_and_links_survive_api_restart(run_workspace: Path) -> None:
     thread_id = "c47f8d99-9af1-4219-bc65-a55a27096cb8"
     with running_server(app, Event()) as url, httpx.Client(base_url=url, timeout=6, trust_env=False) as backend:
-        first = backend.post("/runs", json={"prompt": "save marker: niobium"})
+        first = backend.post("/runs", json=prompt_body("save marker: niobium"))
         first_id = first.headers["X-Run-ID"]
         original = f"/runs/{first_id}"
         assert thread_id in first.text
@@ -457,7 +467,7 @@ def test_latest_run_resumes_the_thread_once_and_links_survive_api_restart(run_wo
         assert "niobium" in accepted.text
         records = [json.loads(line[6:]) for line in accepted.text.splitlines() if line.startswith("data: ")]
         assert records[-2]["event"]["usage"] == {"input_tokens": 25, "cached_input_tokens": 7, "output_tokens": 5}
-        assert (run_workspace / "resume-attempts").read_text().splitlines() == ["recall the marker"]
+        assert (run_workspace / "state" / "resume-attempts").read_text().splitlines() == ["recall the marker"]
         assert len(list((run_workspace / "captures").iterdir())) == 2
         first_session = CaptureFiles.find(run_workspace / "captures", first_id).read_session()
         second_session = CaptureFiles.find(run_workspace / "captures", second_id).read_session()
@@ -481,7 +491,7 @@ def test_latest_run_resumes_the_thread_once_and_links_survive_api_restart(run_wo
         assert [turn["summary"]["actions"] for turn in detail["turns"]] == [0, 0]
         assert all(turn["summary"]["failures"] == 0 for turn in detail["turns"])
         assert backend.get(f"/threads/{thread_id}").json() == detail
-        independent = backend.post("/runs", json={"prompt": "independent conversation"})
+        independent = backend.post("/runs", json=prompt_body("independent conversation"))
         independent_id = independent.headers["X-Run-ID"]
         listing = backend.get("/threads").json()["threads"]
         assert [row["root_run_id"] for row in listing] == [independent_id, first_id]
@@ -505,7 +515,7 @@ def test_latest_run_resumes_the_thread_once_and_links_survive_api_restart(run_wo
 @pytest.mark.usefixtures("executor_socket")
 def test_controlled_turns_edit_same_workspace(live_http: tuple[httpx.Client, Event], run_workspace: Path) -> None:
     backend, _ = live_http
-    first = backend.post("/runs", json={"prompt": "catalog first"})
+    first = backend.post("/runs", json=prompt_body("catalog first"))
     first_id = first.headers["X-Run-ID"]
     second = backend.post(f"/runs/{first_id}/continue", json={"prompt": "catalog second"})
     second_id = second.headers["X-Run-ID"]
@@ -513,6 +523,49 @@ def test_controlled_turns_edit_same_workspace(live_http: tuple[httpx.Client, Eve
     detail = backend.get(f"/threads/by-run/{second_id}").json()
     assert [turn["run_id"] for turn in detail["turns"]] == [first_id, second_id]
     assert detail["thread_id"] == "c47f8d99-9af1-4219-bc65-a55a27096cb8"
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_picker_runs_in_the_selected_original_directory(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "projeto original"
+    directory.mkdir()
+
+    async def select_directory() -> Path:
+        return directory
+
+    monkeypatch.setattr(executor, "pick_directory", select_directory)
+    monkeypatch.setattr(executor, "workspace_selections", {})
+    backend, _ = live_http
+    assert backend.post("/workspace-picker").status_code == 422
+    selection = backend.post("/workspace-picker", headers={"X-Agent-Lens": "workspace-picker"})
+    assert selection.status_code == 200
+    assert selection.json()["path"] == str(directory)
+
+    assert backend.post("/runs", json={"prompt": "catalog first"}).status_code == 422
+    assert backend.post("/runs", json={"prompt": "catalog first", "workspace": str(directory)}).status_code == 422
+    first = backend.post("/runs", json={"prompt": "catalog first", "workspace_id": selection.json()["id"]})
+    assert first.status_code == 200
+    first_id = first.headers["X-Run-ID"]
+    assert (directory / "catalog.txt").read_text() == "category filtering\n"
+    assert not (run_workspace / "example" / "catalog.txt").exists()
+    assert backend.get(f"/threads/by-run/{first_id}").json()["workspace"] == str(directory)
+    assert backend.get("/threads").json()["threads"][0]["workspace"] == str(directory)
+
+    executor.workspace_selections.clear()
+    expired = backend.post("/runs", json={"prompt": "catalog first", "workspace_id": selection.json()["id"]})
+    assert expired.status_code == 409
+    second = backend.post(f"/runs/{first_id}/continue", json={"prompt": "catalog second"})
+    assert second.status_code == 200
+    assert (directory / "catalog.txt").read_text() == "category filtering\npagination\n"
+    new = backend.post("/runs", json={"prompt": "independent conversation", "workspace_run_id": first_id})
+    assert new.status_code == 200
+    detail = backend.get(f"/threads/by-run/{new.headers['X-Run-ID']}").json()
+    assert detail["workspace"] == str(directory)
+    assert detail["root_run_id"] == new.headers["X-Run-ID"]
+    assert len(detail["turns"]) == 1
 
 
 @pytest.mark.usefixtures("executor_socket")
@@ -527,9 +580,9 @@ def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
     assert backend.post(f"/runs/{legacy.directory.name}/continue", json={"prompt": "hello"}).status_code == 409
     assert backend.post("/runs/missing/continue", json={"prompt": "hello"}).status_code == 404
 
-    first = backend.post("/runs", json={"prompt": "save marker: niobium"})
+    first = backend.post("/runs", json=prompt_body("save marker: niobium"))
     first_id = first.headers["X-Run-ID"]
-    (run_workspace / "reject-resume").touch()
+    (run_workspace / "state" / "reject-resume").touch()
     failed = backend.post(f"/runs/{first_id}/continue", json={"prompt": "reject the continuation"})
     assert failed.status_code == 200
     failed_id = failed.headers["X-Run-ID"]
@@ -576,7 +629,7 @@ def test_run_rejects_invalid_request_before_capture(
 
 def test_run_requires_a_host_executor(live_http: tuple[httpx.Client, Event], run_workspace: Path) -> None:
     backend, _ = live_http
-    response = backend.post("/runs", json={"prompt": "Read the example."})
+    response = backend.post("/runs", json=prompt_body("Read the example."))
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Host executor socket is not configured."}
@@ -588,8 +641,9 @@ def test_run_rejects_unavailable_capture_directory(
 ) -> None:
     backend, _ = live_http
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "unused.sock"))
+    monkeypatch.setattr(dependencies, "selected_workspace", lambda *_: str(run_workspace / "example"))
     (run_workspace / "captures").touch()
-    response = backend.post("/runs", json={"prompt": "Read the example."})
+    response = backend.post("/runs", json=prompt_body("Read the example."))
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Capture directory is unavailable."}
@@ -600,7 +654,7 @@ def test_run_streams_saved_records_before_exit_and_rejects_a_concurrent_run(
     run_config: CatalogRun, executor_socket: Path,
 ) -> None:
     backend, _ = live_http
-    with backend.stream("POST", "/runs", json={"prompt": LITERAL_PROMPT}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body(LITERAL_PROMPT)) as response:
         assert response.status_code == 200
         assert response.headers["content-type"].split(";")[0] == "text/event-stream"
         frames = response.iter_lines()
@@ -615,9 +669,9 @@ def test_run_streams_saved_records_before_exit_and_rejects_a_concurrent_run(
 
         transport = httpx.HTTPTransport(uds=str(executor_socket))
         with httpx.Client(transport=transport, base_url="http://executor-host", timeout=2) as executor:
-            assert executor.post("/run", json={"prompt": "second run"}).json() == {"exit_code": None}
+            assert executor.post("/run", json={"prompt": "second run", "workspace": str(run_config.workspace)}).json() == {"exit_code": None}
 
-        (run_workspace / "release").touch()
+        (run_workspace / "state" / "release").touch()
         name, second = next_frame(frames)
         assert (name, second["event"]) == ("record", {"type": "turn.completed"})
         assert next_frame(frames) == ("end", {"exit_code": 0})
@@ -633,7 +687,7 @@ def test_run_reports_subprocess_startup_failure(
 ) -> None:
     backend, _ = live_http
     run_config.binary.unlink()
-    with backend.stream("POST", "/runs", json={"prompt": "Read the example."}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("Read the example.")) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
         assert next_frame(frames) == ("end", {"exit_code": None, "error": "execution_failed"})
@@ -645,7 +699,7 @@ def test_run_preserves_records_when_app_server_exits_before_turn_completion(
     live_http: tuple[httpx.Client, Event], run_workspace: Path,
 ) -> None:
     backend, _ = live_http
-    with backend.stream("POST", "/runs", json={"prompt": "exit 7"}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("exit 7")) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
         kind, record = next_frame(frames)
@@ -675,7 +729,7 @@ def test_run_finishes_capture_after_the_client_disconnects(
     monkeypatch.setattr(capture_run, "Queue", TrackingQueue)
     backend, request_finished = live_http
     span_exporter, log_exporter = telemetry_exports
-    with backend.stream("POST", "/runs", json={"prompt": "Read the example."}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("Read the example.")) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
         kind, first = next_frame(frames)
@@ -688,7 +742,7 @@ def test_run_finishes_capture_after_the_client_disconnects(
     result = directory / "result.json"
     assert not result.exists()
     assert [span.name for span in span_exporter.get_finished_spans()] == ["run.sse", "POST /runs"]
-    (run_workspace / "release").touch()
+    (run_workspace / "state" / "release").touch()
 
     deadline = monotonic() + 5
     while not result.exists() or not result.read_bytes().endswith(b"\n"):
@@ -762,6 +816,7 @@ def test_run_keeps_observed_records_and_rejects_invalid_executor_streams(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
     tail: tuple[dict[str, object], ...],
 ) -> None:
+    monkeypatch.setattr(dependencies, "selected_workspace", lambda *_: str(run_workspace / "example"))
     invalid_executor = FastAPI()
     event = {"type": "turn.started"}
 
@@ -776,7 +831,7 @@ def test_run_keeps_observed_records_and_rejects_invalid_executor_streams(
     backend, _ = live_http
     with (
         running_server(invalid_executor, Event(), unix_path=unix_path),
-        backend.stream("POST", "/runs", json={"prompt": "Read the example."}) as response,
+        backend.stream("POST", "/runs", json=prompt_body("Read the example.")) as response,
     ):
         assert response.status_code == 200
         frames = response.iter_lines()
@@ -794,10 +849,11 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(dependencies, "selected_workspace", lambda *_: str(run_workspace / "example"))
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "missing.sock"))
     backend, _ = live_http
 
-    with backend.stream("POST", "/runs", json={"prompt": "Read the example."}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("Read the example.")) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
         assert next_frame(frames) == ("end", {"exit_code": None, "error": "execution_failed"})
@@ -831,7 +887,7 @@ def test_executor_redacts_its_key_before_broadcast_and_persistence(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, run_config: CatalogRun,
 ) -> None:
     backend, _ = live_http
-    response = backend.post("/runs", json={"prompt": "report a diagnostic"})
+    response = backend.post("/runs", json=prompt_body("report a diagnostic"))
 
     assert response.status_code == 200
     assert run_config.api_key not in response.text
@@ -858,7 +914,7 @@ def test_run_streams_large_event_intact(
 ) -> None:
     backend, _ = live_http
 
-    with backend.stream("POST", "/runs", json={"prompt": "emit a big record"}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("emit a big record")) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
         records = []
@@ -920,7 +976,7 @@ def test_run_logs_safe_command_metadata_for_a_failed_command_in_a_completed_turn
     capsys: pytest.CaptureFixture[str], run_workspace: Path,
 ) -> None:
     backend, request_finished = live_http
-    response = backend.post("/runs", json={"prompt": "report command outcome"})
+    response = backend.post("/runs", json=prompt_body("report command outcome"))
     assert response.status_code == 200
     assert "private-fake-command" in response.text
     assert "private-fake-event" not in response.text
@@ -988,9 +1044,9 @@ def test_run_traces_result_write_failure_without_raw_exception(
         raise OSError("private-result-path")
 
     monkeypatch.setattr(CaptureFiles, "write_result", fail_write)
-    (run_workspace / "release").touch()
+    (run_workspace / "state" / "release").touch()
     backend, request_finished = live_http
-    response = backend.post("/runs", json={"prompt": "Read the example."})
+    response = backend.post("/runs", json=prompt_body("Read the example."))
     assert response.status_code == 200
     assert next_frame(iter(response.text.splitlines()[-3:])) == (
         "end", {"exit_code": None, "error": "execution_failed"},
@@ -1017,7 +1073,7 @@ def test_run_traces_paired_commands_at_their_observed_capture_offsets(
     telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
 ) -> None:
     backend, request_finished = live_http
-    response = backend.post("/runs", json={"prompt": "measure command spans"})
+    response = backend.post("/runs", json=prompt_body("measure command spans"))
     assert response.status_code == 200
     assert next_frame(iter(response.text.splitlines()[-3:])) == ("end", {"exit_code": 0})
     assert request_finished.wait(3)
@@ -1074,7 +1130,7 @@ def test_run_preserves_trace_when_a_line_exceeds_the_limit(
     monkeypatch.setattr(executor, "MAX_EVENT_BYTES", 32 * 1024)
     backend, _ = live_http
 
-    with backend.stream("POST", "/runs", json={"prompt": "emit a big record"}) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("emit a big record")) as response:
         assert response.status_code == 200
         frames = response.iter_lines()
         _, thread = next_frame(frames)
@@ -1089,40 +1145,15 @@ def test_run_preserves_trace_when_a_line_exceeds_the_limit(
     assert json.loads((directory / "result.json").read_text())["exit_code"] is None
 
 
-def test_replay_logs_disconnect_after_loading_a_valid_trace(
-    live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
-    telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
-) -> None:
-    trace = run_workspace / "replay.jsonl"
-    records = [
-        {"elapsed_ns": 0, "event": {"type": "turn.started"}},
-        {"elapsed_ns": 30_000_000_000, "event": {"type": "turn.completed"}},
-    ]
-    trace.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
-    monkeypatch.setattr(dependencies, "REPLAY_TRACE", trace)
-    backend, request_finished = live_http
-    with backend.stream("GET", "/events") as response:
-        assert next_frame(response.iter_lines()) == ("record", records[0])
-    assert request_finished.wait(3)
-
-    span_exporter, log_exporter = telemetry_exports
-    spans = {span.name: span for span in span_exporter.get_finished_spans()}
-    assert (spans["replay.load"].attributes or {})["agent_lens.outcome"] == "completed"
-    assert (spans["replay.emit"].attributes or {})["agent_lens.outcome"] == "disconnected"
-    assert {item.log_record.body for item in log_exporter.get_finished_logs()} == {
-        "replay.load.completed", "replay.sse.disconnected",
-    }
-
-
 @pytest.mark.usefixtures("executor_socket")
 def test_delegation_reconnect_preserves_attribution_and_parent_outcome(run_workspace: Path) -> None:
     with running_server(app, Event()) as url, httpx.Client(base_url=url, timeout=6, trust_env=False) as api:
-        with api.stream("POST", "/runs", json={"prompt": "delegation capture"}) as response:
+        with api.stream("POST", "/runs", json=prompt_body("delegation capture")) as response:
             run_id = response.headers["X-Run-ID"]
             frames = response.iter_lines()
             first = [next_frame(frames)[1] for _ in range(4)]
         run_url = f"/runs/{run_id}"
-        (run_workspace / "delegation-resume").touch()
+        (run_workspace / "state" / "delegation-resume").touch()
         stream = api.get(run_url + "/stream", params={"after": 4})
         lines = stream.text.splitlines()
         tail = [json.loads(line[6:]) for line in lines if line.startswith("data: ")]

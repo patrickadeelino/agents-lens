@@ -28,6 +28,7 @@ from .executor_protocol import (
     RunError,
     RunExit,
     RunOutput,
+    WorkspaceSelection,
 )
 
 _EXECUTOR_MESSAGE = TypeAdapter(RunOutput | RunExit | RunError)
@@ -37,12 +38,31 @@ class ExecutorClient:
     def __init__(self, socket: str) -> None:
         self._socket = socket
 
-    def run(self, prompt: str, on_stdout: StdoutConsumer, *, thread_id: UUID | None = None) -> ExecutionResult:
+    def select_workspace(self) -> WorkspaceSelection | None:
+        response = self._workspace_request("POST", "/workspace-picker", timeout=130)
+        return None if response.status_code == 204 else WorkspaceSelection.model_validate_json(response.content)
+
+    def workspace(self, selection_id: UUID) -> str:
+        return WorkspaceSelection.model_validate_json(
+            self._workspace_request("GET", f"/workspaces/{selection_id}", timeout=5).content,
+        ).path
+
+    def _workspace_request(self, method: str, path: str, *, timeout: int) -> httpx.Response:
+        with httpx.Client(
+            transport=httpx.HTTPTransport(uds=self._socket),
+            base_url="http://executor-host", timeout=timeout, trust_env=False,
+        ) as client:
+            return client.request(method, path).raise_for_status()
+
+    def run(
+        self, prompt: str, on_stdout: StdoutConsumer, *,
+        workspace: str, thread_id: UUID | None = None,
+    ) -> ExecutionResult:
         """Deliver the stdout lines and return the terminal status."""
         with operation_span("executor.request", kind=SpanKind.CLIENT) as span:
             event_log("executor.request.started", "executor_client", "started")
             try:
-                result = self._request(ExecutorRequest(prompt=prompt, thread_id=thread_id), on_stdout, span)
+                result = self._request(ExecutorRequest(prompt=prompt, thread_id=thread_id, workspace=workspace), on_stdout, span)
             except httpx.HTTPError as error:
                 failure_code = executor_http_error_code(span, error)
                 finish_span(span, "failed", error_code=failure_code)

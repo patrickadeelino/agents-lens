@@ -1,5 +1,6 @@
 <script setup>
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
+import { groupConversations } from "./conversationNavigation.js";
 
 const props = defineProps({
   threads: { type: Array, required: true },
@@ -7,9 +8,9 @@ const props = defineProps({
   loading: Boolean,
   error: Boolean,
   drawer: Boolean,
-  replay: Boolean,
 });
-defineEmits(["new", "open", "retry", "replay", "close"]);
+defineEmits(["new", "open", "retry", "close"]);
+const groups = computed(() => groupConversations(props.threads));
 const closeButton = ref(null);
 const panel = ref(null);
 const date = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" });
@@ -27,7 +28,7 @@ function activityDate(value) {
 
 function keepFocus(event) {
   if (!props.drawer) return;
-  const controls = [...panel.value.querySelectorAll("button:not([disabled]), a[href]")].filter((item) => item.offsetParent);
+  const controls = [...panel.value.querySelectorAll("button:not([disabled]), a[href], summary")].filter((item) => item.offsetParent);
   const start = controls[0];
   const end = controls.at(-1);
   if (event.shiftKey && document.activeElement === start) {
@@ -63,31 +64,39 @@ watch(() => props.drawer, async (open) => {
     </button>
 
     <nav class="sidebar-history" aria-labelledby="conversation-list-title">
-      <h2 id="conversation-list-title">Conversas</h2>
+      <h2 id="conversation-list-title">Workspaces</h2>
       <p v-if="loading && !threads.length" class="quiet-text" role="status">Carregando conversas…</p>
       <div v-else-if="error" class="sidebar-notice" role="alert">
         <p>Não foi possível carregar as conversas.</p>
         <button type="button" class="link-button" @click="$emit('retry')">Tentar novamente</button>
       </div>
       <p v-else-if="!threads.length" class="quiet-text">Nenhuma conversa iniciada ainda.</p>
-      <ul v-if="threads.length">
-        <li v-for="thread in threads" :key="thread.root_run_id">
-          <a class="history-link" :href="threadLink(thread)" :aria-current="currentRoot === thread.root_run_id ? 'page' : undefined"
-            @click="$emit('open', $event)">
-            <span class="turn-state-dot history-state" :data-state="thread.status" aria-hidden="true">
-              <svg v-if="thread.status === 'completed'" viewBox="0 0 24 24"><path d="m6 12 4 4 8-8"/></svg>
-              <svg v-else-if="thread.status === 'failed'" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg>
-            </span>
-            <strong>{{ thread.title }}</strong>
-            <small>{{ thread.turns && thread.status === "active" ? `${thread.turns.length} turnos · turno ${thread.turns.length} em andamento` : labels[thread.status] }}<template v-if="activityDate(thread.last_activity_at)"> · {{ activityDate(thread.last_activity_at) }}</template></small>
-          </a>
-        </li>
-      </ul>
+      <section v-for="group in groups" :key="group.path ?? ''" class="workspace-group">
+        <details open>
+          <summary :title="group.path ?? undefined">
+            <span>{{ group.name }}</span>
+          </summary>
+          <ul>
+            <li v-for="thread in group.threads" :key="thread.root_run_id">
+              <a class="history-link" :href="threadLink(thread)" :aria-current="currentRoot === thread.root_run_id ? 'page' : undefined"
+                @click="$emit('open', $event)">
+                <span class="turn-state-dot history-state" :data-state="thread.status" aria-hidden="true">
+                  <svg v-if="thread.status === 'completed'" viewBox="0 0 24 24"><path d="m6 12 4 4 8-8"/></svg>
+                  <svg v-else-if="thread.status === 'failed'" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg>
+                </span>
+                <strong>{{ thread.title }}</strong>
+                <small>{{ thread.turns && thread.status === "active" ? `${thread.turns.length} turnos · turno ${thread.turns.length} em andamento` : labels[thread.status] }}<template v-if="activityDate(thread.last_activity_at)"> · {{ activityDate(thread.last_activity_at) }}</template></small>
+              </a>
+            </li>
+          </ul>
+        </details>
+        <button v-if="group.path" type="button" class="icon-button workspace-new"
+          :title="`Nova conversa em ${group.path}`" :aria-label="`Nova conversa em ${group.path}`"
+          @click="$emit('new', group)">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </section>
     </nav>
 
-    <footer class="sidebar-footer">
-      <div class="workspace-label"><span>Workspace</span><strong>API de catálogo</strong><small>Leitura e escrita permitidas</small></div>
-      <button type="button" class="link-button" :aria-current="replay ? 'page' : undefined" @click="$emit('replay')">Ver replay de exemplo</button>
-    </footer>
   </aside>
 </template>
