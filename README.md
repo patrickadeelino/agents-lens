@@ -126,3 +126,7 @@ npm --prefix apps/web run build
 ```
 
 </details>
+
+## License
+
+[MIT](LICENSE). The architecture diagram embeds the Space Grotesk font, distributed under the SIL Open Font License.
