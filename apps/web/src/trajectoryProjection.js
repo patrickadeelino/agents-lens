@@ -154,8 +154,13 @@ export class TrajectoryProjection {
         const branch = this.delegates.get(entry.branchId);
         const path = [...ancestors, branch.thread];
         const rows = [...branch.turns].flatMap(([turn, child]) => this.treeRows(child, path, [branch.thread, turn]));
+        const turns = [...branch.turns.values()].filter((turn) => turn.firstOffset != null);
+        const duration = turns.length ? formatDuration(
+          Math.max(...turns.map((turn) => turn.lastOffset)) - Math.min(...turns.map((turn) => turn.firstOffset)),
+        ) : null;
         return {
-          ...entry, key: branch.thread, branch: true, rows, ancestors, terminal: branch.terminal || this.terminal,
+          ...entry, key: branch.thread, branch: true, rows, ancestors, duration, terminal: branch.terminal || this.terminal,
+          actionCount: flattenTrajectory(rows).filter((row) => row.command || row.tool).length,
           state: !branch.terminal && this.terminal ? "incomplete" : branch.state,
           label: [t.delegation.label(branch.index), branch.name].filter(Boolean).join(" · "),
           summary: maskPaths(branch.summary, this.workspace),

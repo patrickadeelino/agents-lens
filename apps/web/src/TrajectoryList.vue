@@ -7,7 +7,7 @@ import { t } from "./messages.js";
 
 const props = defineProps({
   rows: Array, filter: String, selected: String, terminal: Boolean,
-  workspace: String, runId: String, isOpen: Function,
+  workspace: String, runId: String, isOpen: Function, finalKey: String,
 });
 const emit = defineEmits(["select", "announce", "toggle"]);
 const visible = computed(() => visibleTrajectoryRows(props.rows, props.filter));
@@ -27,7 +27,9 @@ function toggle(key, event) {
       <details v-if="entry.branch" class="delegation-branch" :open="isOpen(entry.key)"
         @toggle="toggle(entry.key, $event)">
         <summary>
-          <span>{{ entry.label }}</span> <span class="delegation-state">{{ branchStateLabel(entry.state) }}</span>
+          <span class="delegation-name">{{ entry.label }}</span>
+          <span class="delegation-meta">{{ t.common.actions(entry.actionCount) }}<template v-if="entry.duration"> · {{ entry.duration }}</template></span>
+          <span class="delegation-state" :data-state="entry.state">{{ branchStateLabel(entry.state) }}</span>
           <span v-if="entry.summary" class="delegation-result">{{ entry.summary }}</span>
         </summary>
         <TrajectoryList :rows="entry.rows" :filter="filter" :selected="selected" :terminal="entry.terminal"
@@ -39,11 +41,11 @@ function toggle(key, event) {
       </details>
       <TechnicalEvents v-else-if="entry.technicalEvents" :events="entry.technicalEvents" :title="entry.groupTitle">
         <template #entry="{ entry: item }">
-          <TrajectoryEntry :entry="item" :selected="selected === item.key" :terminal="entry.terminal ?? terminal" :workspace="workspace"
+          <TrajectoryEntry :entry="item" :selected="selected === item.key" :final="item.key === finalKey" :terminal="entry.terminal ?? terminal" :workspace="workspace"
             :run-id="runId" @select="$emit('select', $event)" @announce="$emit('announce', $event)" />
         </template>
       </TechnicalEvents>
-      <TrajectoryEntry v-else :entry="entry" :selected="selected === entry.key" :terminal="entry.terminal ?? terminal" :workspace="workspace"
+      <TrajectoryEntry v-else :entry="entry" :selected="selected === entry.key" :final="entry.key === finalKey" :terminal="entry.terminal ?? terminal" :workspace="workspace"
         :run-id="runId" @select="$emit('select', $event)" @announce="$emit('announce', $event)" />
     </li>
   </ol>

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, ref, watch } from "vue";
-import { groupConversations } from "./conversationNavigation.js";
+import { activityLabel, groupConversations, threadLink } from "./conversationNavigation.js";
 import { t } from "./messages.js";
 
 const props = defineProps({
@@ -14,20 +14,9 @@ defineEmits(["new", "open", "retry", "close"]);
 const groups = computed(() => groupConversations(props.threads));
 const closeButton = ref(null);
 const panel = ref(null);
-const date = new Intl.DateTimeFormat("en-US", { day: "2-digit", month: "2-digit" });
 const labels = {
   active: t.status.inProgress, completed: t.status.completed, failed: t.status.failed, unconfirmed: t.status.actionUnconfirmed,
 };
-
-function threadLink(thread) {
-  const params = thread.thread_id ? { thread_id: thread.thread_id } : { run_id: thread.latest_run_id };
-  return `?${new URLSearchParams(params)}`;
-}
-
-function activityDate(value) {
-  const time = new Date(value);
-  return value && Number.isFinite(time.getTime()) ? date.format(time) : null;
-}
 
 function keepFocus(event) {
   if (!props.drawer) return;
@@ -87,8 +76,8 @@ watch(() => props.drawer, async (open) => {
                   <svg v-if="thread.status === 'completed'" viewBox="0 0 24 24"><path d="m6 12 4 4 8-8"/></svg>
                   <svg v-else-if="thread.status === 'failed'" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg>
                 </span>
-                <strong>{{ thread.title }}</strong>
-                <small>{{ thread.turns && thread.status === "active" ? t.sidebar.turnProgress(thread.turns.length) : labels[thread.status] }}<template v-if="activityDate(thread.last_activity_at)"> · {{ activityDate(thread.last_activity_at) }}</template></small>
+                <strong :title="thread.title">{{ thread.title }}</strong>
+                <small>{{ thread.turns && thread.status === "active" ? t.sidebar.turnProgress(thread.turns.length) : labels[thread.status] }}<template v-if="activityLabel(thread.last_activity_at)"> · {{ activityLabel(thread.last_activity_at) }}</template></small>
               </a>
             </li>
           </ul>

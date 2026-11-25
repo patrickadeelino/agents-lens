@@ -12,6 +12,7 @@ defineProps({
   terminal: Boolean,
   workspace: String,
   runId: String,
+  final: Boolean,
 });
 defineEmits(["select", "announce"]);
 const detailsId = useId();
@@ -23,9 +24,9 @@ const commandBlock = ref(null);
     v-if="entry.command || entry.tool" :entry="entry" :selected="selected" :controls="detailsId"
     :terminal="terminal" @select="action => $emit('select', action)"
   />
-  <EventRow v-else :entry="entry" :selected="selected" :controls="detailsId" @select="action => $emit('select', action)" />
-  <div v-show="selected" :id="detailsId" class="trajectory-action-details">
-    <template v-if="selected">
+  <EventRow v-else :entry="entry" :selected="selected" :controls="detailsId" :final="final" @select="action => $emit('select', action)" />
+  <div v-show="selected && !final" :id="detailsId" class="trajectory-action-details">
+    <template v-if="selected && !final">
       <CommandBlock v-if="entry.command?.command" ref="commandBlock" preview-only :raw="entry.command.command" :workspace="workspace" @announce="$emit('announce', $event)" />
       <ActionDetails :entry="entry" :terminal="terminal" :workspace="workspace" :run-id="runId" @announce="$emit('announce', $event)">
         <template v-if="entry.command?.command" #controls>

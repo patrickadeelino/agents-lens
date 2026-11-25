@@ -9,14 +9,16 @@ const props = defineProps({
   final: Boolean,
   controls: String,
 });
-defineEmits(["select", "jump"]);
+defineEmits(["select"]);
+const revealed = ref(false);
+const collapsed = computed(() => props.final && !revealed.value);
 const message = ref(null);
 const messageId = useId();
 const expanded = ref(false);
 const longMessage = ref(false);
 const reasoning = computed(() => props.entry.event?.item?.type === "reasoning");
 const html = computed(() => (
-  !props.final && props.entry.markdown ? renderAgentMarkdown(props.entry.markdown) : ""
+  !collapsed.value && props.entry.markdown ? renderAgentMarkdown(props.entry.markdown) : ""
 ));
 
 watchEffect((onCleanup) => {
@@ -45,9 +47,16 @@ watchEffect((onCleanup) => {
         <p class="run-kicker">{{ t.event.reasoning }}</p>
         <p v-if="entry.text" class="event-text">{{ entry.text }}</p>
       </template>
-      <p v-else-if="final" class="final-reply-row">
-        <span class="run-kicker">{{ t.event.finalReply }}</span> · {{ t.event.viewAtTop }}
-      </p>
+      <template v-else-if="final">
+        <p class="final-reply-row">
+          <span class="run-kicker">{{ t.event.finalReply }}</span>
+          <span v-if="collapsed">{{ t.event.shownInConversation }}</span>
+          <button type="button" class="link-button message-toggle" :aria-expanded="!collapsed" @click="revealed = !revealed">
+            {{ collapsed ? t.event.showHere : t.event.showLess }}
+          </button>
+        </p>
+        <div v-if="html" class="agent-message final-reply-text" v-html="html"></div>
+      </template>
       <template v-else>
         <p class="run-kicker">{{ t.event.codex }}</p>
         <div
@@ -61,11 +70,11 @@ watchEffect((onCleanup) => {
       </template>
     </div>
     <button
-      v-if="!entry.omitted" type="button" class="event-select"
-      :aria-label="[final ? t.event.finalReplyLabel : reasoning ? t.event.inspectReasoning : t.event.inspectMessage, entry.offset].filter(Boolean).join(' ')"
-      :aria-current="!final && selected ? 'true' : undefined"
+      v-if="!entry.omitted && !final" type="button" class="event-select"
+      :aria-label="[reasoning ? t.event.inspectReasoning : t.event.inspectMessage, entry.offset].filter(Boolean).join(' ')"
+      :aria-current="selected ? 'true' : undefined"
       :aria-controls="controls" :aria-expanded="controls ? selected : undefined"
-      @click="final ? $emit('jump') : $emit('select', entry, $event.currentTarget)"
+      @click="$emit('select', entry, $event.currentTarget)"
     ><span class="visually-hidden">{{ t.event.inspectMessage }}</span></button>
   </article>
   <article v-else class="event-card">

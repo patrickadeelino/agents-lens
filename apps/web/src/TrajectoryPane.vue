@@ -1,6 +1,6 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from "vue";
-import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSummary, isEssential, visibleTrajectoryRows } from "./eventPresentation.js";
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, toRef, useId, watch } from "vue";
+import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSummary, isEssential, relativePath, visibleTrajectoryRows } from "./eventPresentation.js";
 import { actionCallId, flattenTrajectory, observedFileChanges } from "./trajectoryProjection.js";
 import { CONNECTION, connectionLabel } from "./connectionState.js";
 import TrajectoryList from "./TrajectoryList.vue";
@@ -11,6 +11,7 @@ const props = defineProps({
   runId: String,
   threadId: String,
   summary: Object,
+  folder: String,
   turnNumber: Number,
   prompt: String,
   status: String,
@@ -28,11 +29,12 @@ const props = defineProps({
   focusOnOpen: Boolean,
   closeable: Boolean,
 });
+provide("folder", toRef(props, "folder"));
 const promptExpanded = ref(false);
 const promptId = useId();
 const promptPreview = computed(() => {
   const characters = Array.from(props.prompt ?? "");
-  return characters.length > 150 ? characters.slice(0, 150).join("") + "..." : null;
+  return characters.length > 90 ? characters.slice(0, 90).join("").trimEnd() + "…" : null;
 });
 
 const emit = defineEmits(["close", "active-turn", "call", "retry", "retry-history", "scroll", "announce"]);
@@ -52,6 +54,7 @@ let resolvedCall;
 let locatingCall;
 const { data, nextBefore, loadEarlier, loadingEarlier, historyError } = props.model;
 
+const finalKey = computed(() => (data.value.terminal ? data.value.reply?.key : undefined));
 const branchChoices = ref(new Map());
 const liveBranches = ref(new Set());
 const flat = computed(() => flattenTrajectory(data.value.rows));
@@ -316,15 +319,16 @@ onUnmounted(() => {
             <div v-if="duration"><dt>{{ durationLabel }}</dt><dd>{{ duration }}</dd></div>
             <div v-if="hasObservedActions">
               <dt>{{ partial ? t.pane.loadedSection : active ? t.pane.observedSoFar : t.pane.observed }}</dt>
-              <dd>{{ t.common.actions(actions) }}<template v-if="failures != null && (failures || (!active && !partial))"> · {{ t.common.failures(failures) }}</template></dd>
+              <dd>{{ t.common.actions(actions) }}<template v-if="failures != null && (failures || (!active && !partial))"> · <span :class="{ 'metric-failures': failures }">{{ t.common.failures(failures) }}</span></template></dd>
             </div>
-          </dl>
-          <dl v-if="tokens || tokenDetails.length" class="trajectory-tokens" :aria-label="t.tokens.usage">
             <div v-if="tokens"><dt>{{ tokens.label }}</dt><dd>{{ tokens.value }}</dd></div>
-            <template v-if="tokenDetails.length > 1 || !tokens">
-              <div v-for="token in tokenDetails" :key="token.field"><dt>{{ token.label }}</dt><dd>{{ token.value }}</dd></div>
-            </template>
           </dl>
+          <details v-if="tokenDetails.length > 1 || (!tokens && tokenDetails.length)" class="token-details">
+            <summary>{{ t.tokens.details }}</summary>
+            <dl class="trajectory-tokens" :aria-label="t.tokens.usage">
+              <div v-for="token in tokenDetails" :key="token.field"><dt>{{ token.label }}</dt><dd>{{ token.value }}</dd></div>
+            </dl>
+          </details>
         </div>
         <p v-if="detail" class="trajectory-state-note">{{ detail }}</p>
         <div v-if="summary?.files.length || summary?.tests.length || files.length" class="trajectory-highlights">
@@ -332,7 +336,7 @@ onUnmounted(() => {
           <h3>{{ t.pane.changedFiles }} · {{ summary.files.length }}</h3>
           <ul>
             <li v-for="file in summary.files" :key="file.path">
-              <button type="button" class="link-button" @click="showEvidence(file.item_id)"><code>{{ maskPaths(file.path, data.workspace) }}</code></button>
+              <button type="button" class="link-button" :title="maskPaths(file.path, data.workspace)" @click="showEvidence(file.item_id)"><code>{{ relativePath(maskPaths(file.path, data.workspace), folder) }}</code></button>
             </li>
           </ul>
         </section>
@@ -340,7 +344,7 @@ onUnmounted(() => {
           <h3>{{ t.pane.changedFiles }} <span v-if="nextBefore != null">{{ t.pane.loadedSuffix }}</span></h3>
           <ul>
             <li v-for="file in files" :key="file.path">
-              <button type="button" class="link-button" @click="jumpTo(file.entry)"><code>{{ file.path }}</code></button>
+              <button type="button" class="link-button" :title="file.path" @click="jumpTo(file.entry)"><code>{{ relativePath(file.path, folder) }}</code></button>
             </li>
           </ul>
         </section>
@@ -348,7 +352,7 @@ onUnmounted(() => {
           <h3>{{ t.pane.tests }}</h3>
           <ul>
             <li v-for="(test, index) in summary.tests" :key="test.item_id">
-              <button type="button" class="link-button" @click="showEvidence(test.item_id)">
+              <button type="button" class="link-button test-run" :data-failed="(test.exit_code != null && test.exit_code !== 0) || undefined" @click="showEvidence(test.item_id)">
                 {{ t.pane.testRun(index + 1, test.exit_code === 0 ? t.status.completed : test.exit_code == null ? t.status.resultUnavailable : t.pane.testFailed(test.exit_code)) }}
               </button>
             </li>
@@ -391,7 +395,7 @@ onUnmounted(() => {
         </p>
         <p v-if="!visible.length" class="empty-timeline">{{ filter === "failures" ? t.pane.noFailures : t.pane.noActions }}</p>
         <TrajectoryList ref="timeline" :rows="data.rows" :filter="filter" :selected="expanded"
-          :terminal="data.terminal" :workspace="data.workspace" :run-id="runId" :is-open="isBranchOpen"
+          :terminal="data.terminal" :workspace="data.workspace" :run-id="runId" :is-open="isBranchOpen" :final-key="finalKey"
           @toggle="setBranch" @select="select" @announce="$emit('announce', $event)" />
       </section>
       <p v-else-if="!loading && !error && !data.rows.length" class="pane-notice" role="status">

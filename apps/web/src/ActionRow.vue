@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from "vue";
-import { firstLine, lastNonEmptyLine } from "./eventPresentation.js";
+import { computed, inject } from "vue";
+import { firstLine, lastNonEmptyLine, relativePath } from "./eventPresentation.js";
 import { t } from "./messages.js";
 
 const props = defineProps({
@@ -11,11 +11,12 @@ const props = defineProps({
   controls: String,
 });
 defineEmits(["select"]);
+const folder = inject("folder", null);
 const name = computed(() => props.entry.command
   ? props.entry.commandText || t.action.command : props.entry.tool.name);
 const title = computed(() => {
   if (props.entry.event?.item?.type === "file_change") return props.entry.toolPreview
-    ? t.action.fileChanged(props.entry.toolPreview) : t.tools.fileChanges;
+    ? t.action.fileChanged(relativePath(props.entry.toolPreview, folder?.value)) : t.tools.fileChanges;
   if (/^(?:(?:rtk(?: proxy)?|uv run)\s+)*(?:pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))(?:\s|$)/.test(name.value)) return t.commandTitles.tests;
   return props.entry.title || (props.entry.command ? t.commandTitles.run : name.value);
 });
@@ -46,7 +47,7 @@ const accessibleName = computed(() => [
       <span class="command-title">{{ title }}</span>
       <code v-if="entry.command" class="command-literal" :title="name">{{ name }}</code>
     </span>
-    <span class="command-status">{{ fileChange && !entry.failed && entry.statusKey === "completed" ? t.action.fileChange : label }}</span>
+    <span class="command-status" :data-tone="entry.failed || conflicting ? 'attention' : entry.statusKey === 'completed' ? 'quiet' : 'open'">{{ fileChange && !entry.failed && entry.statusKey === "completed" ? t.action.fileChange : label }}</span>
     <span v-if="entry.offset" class="command-times command-offset" :title="t.action.firstObservation">{{ entry.offset }}</span>
     <span v-if="conflicting" class="failure-preview">{{ t.action.conflictingTitle }}</span>
     <span v-else-if="entry.preview && !selected" class="failure-preview">{{ entry.preview }}</span>

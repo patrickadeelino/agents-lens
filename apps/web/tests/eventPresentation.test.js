@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandErrorPreview, commandTitle, describeEvent, displayCommand, displayValue, formatDuration, formatOffset, isStartupCommand, maskPaths, observedRunDuration, trajectoryRows } from "../src/eventPresentation.js";
+import { commandErrorPreview, commandTitle, describeEvent, displayCommand, displayValue, formatDuration, formatOffset, isStartupCommand, maskPaths, observedRunDuration, relativePath, trajectoryRows } from "../src/eventPresentation.js";
 
 test("Essential folds only adjacent technical events and leaves failures inspectable", () => {
   const rows = [
@@ -98,4 +98,12 @@ test("keeps empty assistant message starts in All and shows completed text in Es
   const completed = { event: { type: "item.completed", item: { type: "agent_message", text: "Done" } } };
   assert.deepEqual(trajectoryRows([started, completed], "essential"), [completed]);
   assert.deepEqual(trajectoryRows([started, completed], "all"), [started, completed]);
+});
+
+test("file paths are shown relative to the conversation's folder only when they are inside it", () => {
+  assert.equal(relativePath("/workspace/api/src/catalog.py", "/workspace/api"), "src/catalog.py");
+  assert.equal(relativePath("~/api/catalog.py", "/home/demo/api/"), "catalog.py");
+  assert.equal(relativePath("/workspace/api-backup/catalog.py", "/workspace/api"), "/workspace/api-backup/catalog.py");
+  assert.equal(relativePath("/etc/hosts", "/workspace/api"), "/etc/hosts");
+  assert.equal(relativePath("catalog.py", undefined), "catalog.py");
 });

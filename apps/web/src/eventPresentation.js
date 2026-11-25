@@ -64,6 +64,14 @@ export function maskPaths(text, workspace = null) {
   return masked.replace(/\/(?:home|Users)\/[\w.@+-]+/g, "~");
 }
 
+/** Shortens a file path under the conversation's folder, whether or not it was masked for display. */
+export function relativePath(path, folder) {
+  if (typeof path !== "string" || typeof folder !== "string" || !folder.startsWith("/")) return path;
+  const root = folder.replace(/\/+$/, "");
+  const prefix = [root, maskPaths(root)].find((candidate) => candidate && path.startsWith(`${candidate}/`));
+  return prefix ? path.slice(prefix.length + 1) : path;
+}
+
 export function displayValue(value, workspace) {
   if (typeof value === "string") return maskPaths(value, workspace);
   const serialized = JSON.stringify(value, (_, item) => maskPaths(item, workspace), 2);

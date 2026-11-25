@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from "vue";
 import ConversationSidebar from "./ConversationSidebar.vue";
 import ConversationTurn from "./ConversationTurn.vue";
+import DemoHome from "./DemoHome.vue";
 import FolderPicker from "./FolderPicker.vue";
 import HistoricalTrajectory from "./HistoricalTrajectory.vue";
 import TrajectoryPane from "./TrajectoryPane.vue";
@@ -91,6 +92,7 @@ const paneProps = computed(() => ({
   runId: selectedTurn.value?.run_id,
   threadId: conversation.value?.thread_id,
   summary: selectedTurn.value?.summary,
+  folder: conversation.value?.workspace ?? undefined,
   turnNumber: selectedNumber.value,
   prompt: selectedTurn.value?.prompt,
   status: turnLabel(selectedTurn.value?.status),
@@ -664,36 +666,43 @@ onUnmounted(() => {
     </header>
 
     <main class="conversation-main" :class="{ 'home-main': view !== 'thread' }" :inert="drawer || (hasPane && !wideSidebar)">
-      <div v-if="demoMode" class="connection-notice executor-notice">
-        <p role="status">{{ t.demo.notice }}</p>
-      </div>
+      <p v-if="demoMode" class="demo-strip" role="status">{{ t.demo.notice }}</p>
       <div v-else-if="executorReady === false" class="connection-notice executor-notice">
         <p role="status">{{ t.executor.unavailable }}</p>
         <button type="button" class="secondary" :disabled="checkingExecutor" @click="checkExecutor">{{ t.executor.check }}</button>
       </div>
-      <section v-if="view === 'home'" class="home-composer" aria-labelledby="composer-title">
+      <DemoHome v-if="view === 'home' && demoMode" :threads="threads" @open="onThreadClick" />
+      <section v-else-if="view === 'home'" class="home-composer" aria-labelledby="composer-title">
         <p v-if="navigationError" class="composer-status" role="alert">
           {{ navigationError }} <button type="button" class="link-button" @click="restoreLocation()">{{ t.common.tryAgain }}</button>
         </p>
         <form id="run-form" class="run-form" @submit.prevent="sendPrompt(prompt)">
           <p class="view-caption">{{ t.common.newConversation }}</p>
           <h1 id="composer-title"><label for="prompt">{{ t.composer.heading }}</label></h1>
-          <textarea id="prompt" ref="promptInput" v-model="prompt" name="prompt" rows="5" required :readonly="busy"
-            :placeholder="t.composer.placeholder"
-            @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
-            @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
-          <div class="workspace-summary">
-            <button type="button" class="secondary compact-button" :disabled="!executorReady || busy || pickingWorkspace" @click="chooseWorkspace">
-              {{ t.composer.selectFolder }}
-            </button>
-            <p v-if="selectedWorkspace" class="workspace-path">{{ selectedWorkspace.path }}</p>
+          <div class="composer-card">
+            <textarea id="prompt" ref="promptInput" v-model="prompt" name="prompt" rows="5" required :readonly="busy"
+              :placeholder="t.composer.placeholder"
+              @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
+              @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
+            <div class="composer-bar">
+              <button type="button" class="secondary folder-button" :disabled="!executorReady || busy || pickingWorkspace"
+                :title="selectedWorkspace?.path" :aria-label="selectedWorkspace ? t.composer.changeFolder(selectedWorkspace.path) : undefined"
+                @click="chooseWorkspace">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                <span>{{ selectedWorkspace ? workspaceName(selectedWorkspace.path) : t.composer.selectFolder }}</span>
+                <svg class="folder-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
+              </button>
+              <div class="composer-submit">
+                <kbd>{{ t.composer.shortcut }}</kbd>
+                <button id="execute" type="submit" class="run-button" :disabled="!executorReady || busy || pickingWorkspace || !selectedWorkspace || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
+                  {{ busy ? t.composer.sending : t.composer.run }}
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="run-actions">
-            <button id="execute" type="submit" :disabled="!executorReady || busy || pickingWorkspace || !selectedWorkspace || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
-              {{ busy ? t.composer.sending : t.composer.run }}
-            </button>
-            <kbd>{{ t.composer.shortcut }}</kbd>
-          </div>
+          <p v-if="selectedWorkspace" class="composer-hint workspace-path">{{ selectedWorkspace.path }}</p>
+          <p v-else-if="executorReady" class="composer-hint">{{ t.composer.needsFolder }}</p>
           <p v-if="composerError" class="composer-status" role="alert">{{ t.composer.startFailed(composerError) }}</p>
         </form>
       </section>
@@ -702,7 +711,7 @@ onUnmounted(() => {
       <template v-else-if="view === 'thread'">
         <header class="conversation-heading">
           <div class="conversation-title">
-            <h1 ref="conversationHeading" tabindex="-1">{{ conversation.title }}</h1>
+            <h1 ref="conversationHeading" tabindex="-1" :title="conversation.title">{{ conversation.title }}</h1>
             <p v-if="conversation.workspace" class="conversation-workspace" :title="conversation.workspace">
               {{ workspaceName(conversation.workspace) }}
             </p>
@@ -726,16 +735,24 @@ onUnmounted(() => {
             @inspect="inspectTurn" />
         </ol>
         <div class="conversation-composer">
-          <form class="continuation-form" :class="{ 'continuation-waiting': !canContinue && !continuationDraft }" @submit.prevent="sendPrompt(continuationDraft, conversation.latest_run_id)">
-            <label for="continuation-prompt">{{ t.continuation.label }}</label>
+          <form class="continuation-form composer-card" :class="{ 'continuation-waiting': !canContinue && !continuationDraft }" @submit.prevent="sendPrompt(continuationDraft, conversation.latest_run_id)">
+            <label for="continuation-prompt" class="visually-hidden">{{ t.continuation.label }}</label>
             <textarea v-if="canContinue || continuationDraft" id="continuation-prompt" v-model="continuationDraft" rows="2" required
               :readonly="!canContinue" :aria-describedby="canContinue ? undefined : 'continuation-note'"
               :placeholder="t.continuation.placeholder"
               @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
               @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
             <textarea v-else id="continuation-prompt" class="visually-hidden" disabled aria-describedby="continuation-note"></textarea>
-            <p v-if="!canContinue" id="continuation-note" class="quiet-text">{{ continuationNote }}</p>
-            <button type="submit" :disabled="!canContinue || !continuationDraft.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">{{ t.continuation.send }}</button>
+            <div class="composer-bar">
+              <p v-if="!canContinue" id="continuation-note" class="quiet-text">{{ continuationNote }}</p>
+              <div class="composer-submit">
+                <kbd v-if="canContinue">{{ t.composer.shortcut }}</kbd>
+                <button type="submit" class="run-button" :disabled="!canContinue || !continuationDraft.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
+                  {{ t.continuation.send }}
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+                </button>
+              </div>
+            </div>
           </form>
           <p v-if="continuationError" role="alert" class="continuation-error">{{ continuationError }}</p>
         </div>

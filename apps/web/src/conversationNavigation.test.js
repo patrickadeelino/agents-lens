@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { groupConversations, inspectionUrl, resolveInspectedRun } from "./conversationNavigation.js";
+import { activityLabel, groupConversations, inspectionUrl, resolveInspectedRun } from "./conversationNavigation.js";
 
 test("inspection only addresses a turn belonging to the conversation", () => {
   const thread = { turns: [{ run_id: "first" }, { run_id: "second" }] };
@@ -29,4 +29,13 @@ test("groups use full workspace paths and preserve activity order", () => {
   ]);
   assert.deepEqual(groups[0].threads.map((thread) => thread.root_run_id), ["one", "three"]);
   assert.equal(groups[0].runId, "one");
+});
+
+test("activity dates stay short and name the current day", () => {
+  const now = new Date(2026, 10, 25, 18, 0);
+  assert.equal(activityLabel(new Date(2026, 10, 25, 0, 5).toISOString(), now), "Today");
+  assert.equal(activityLabel(new Date(2026, 10, 24, 23, 55).toISOString(), now), "Nov 24");
+  assert.equal(activityLabel(new Date(2025, 0, 2).toISOString(), now), "Jan 2, 2025");
+  assert.equal(activityLabel(null, now), null);
+  assert.equal(activityLabel("not a date", now), null);
 });
