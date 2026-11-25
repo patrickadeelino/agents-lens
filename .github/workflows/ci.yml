@@ -1,0 +1,88 @@
+# Checks that make no model calls. No OpenAI key is needed.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      coverage: ${{ steps.coverage.outputs.percent }}
+    defaults:
+      run:
+        working-directory: apps/api-lens
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.13"
+      - run: uv run --locked ruff check .
+      - run: uv run --locked mypy .
+      - run: uv run --locked coverage run -m pytest -q
+      # Fails below the minimum set in pyproject.toml.
+      - run: uv run --locked coverage report
+      - id: coverage
+        run: echo "percent=$(uv run --locked coverage report --format=total)" >> "$GITHUB_OUTPUT"
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose -f compose.demo.yaml up --build --wait
+      - name: The demo answers and has its recorded conversations
+        run: |
+          curl --fail --silent --show-error --dump-header - http://127.0.0.1:8081/ready | grep -i '^x-agent-lens-mode: demo'
+          curl --fail --silent --show-error http://127.0.0.1:8081/threads |
+            python3 -c 'import json, sys; assert len(json.load(sys.stdin)["threads"]) == 2'
+      - if: failure()
+        run: docker compose -f compose.demo.yaml logs
+
+  # Publishes the number behind the README badge to the "badges" branch, which holds only that file.
+  coverage-badge:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - env:
+          PERCENT: ${{ needs.backend.outputs.coverage }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init --quiet --initial-branch=badges badges
+          cd badges
+          printf '{"schemaVersion":1,"label":"backend coverage","message":"%s%%","color":"1a56db"}\n' "$PERCENT" > coverage.json
+          git add coverage.json
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet -m "chore: update coverage badge"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges

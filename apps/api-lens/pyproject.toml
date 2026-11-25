@@ -42,3 +42,6 @@ warn_unused_ignores = true
 [tool.coverage.run]
 branch = true
 source = ["app", "executor", "src"]
+
+[tool.coverage.report]
+fail_under = 85

@@ -1,5 +1,8 @@
 # Agent Lens
 
+[![CI](https://github.com/patrickadeelino/agents-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/patrickadeelino/agents-lens/actions/workflows/ci.yml)
+![Backend coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/patrickadeelino/agents-lens/badges/coverage.json)
+
 Agent Lens is a local web interface for watching a coding agent work. Choose a folder, send a prompt and follow what Codex does as it happens: messages, shell commands, file changes, failures and subagents.
 
 ![A live run: choosing a folder, sending a prompt and following the trajectory as Codex runs the tests, changes a file and asks a subagent to review it.](docs/images/live-run.gif)
@@ -116,7 +119,8 @@ The checks make no model calls. They need `uv`, Python 3.13 and Node.js 24. Run 
 ```sh
 uv run --directory apps/api-lens --locked ruff check .
 uv run --directory apps/api-lens --locked mypy .
-uv run --directory apps/api-lens --locked pytest -q
+uv run --directory apps/api-lens --locked coverage run -m pytest -q
+uv run --directory apps/api-lens --locked coverage report
 ```
 
 ```sh
