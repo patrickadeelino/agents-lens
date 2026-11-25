@@ -39,7 +39,7 @@ def test_history_paginates_in_order_and_calculates_command_duration_across_pages
     history_capture.write_result(0)
     path = f"/runs/{history_capture.directory.name}/events"
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         newest = client.get(path, params={"limit": 2})
         assert newest.status_code == 200
         assert newest.headers["cache-control"] == "no-store"
@@ -76,7 +76,7 @@ def test_history_keeps_a_command_failure_without_an_observed_start(history_captu
         ])
     history_capture.write_result(0)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get(f"/runs/{history_capture.directory.name}/events")
 
     assert response.status_code == 200
@@ -92,7 +92,7 @@ def test_history_keeps_only_complete_lines_before_a_result_exists(history_captur
     trace.write_bytes(record(0, "turn.started").encode() + b'{"elapsed_ns":1,"event":{"type":"\xc3')
     path = f"/runs/{history_capture.directory.name}/events"
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get(path)
         history_capture.write_result(0)
         invalid = client.get(path)
@@ -105,7 +105,7 @@ def test_history_keeps_only_complete_lines_before_a_result_exists(history_captur
 
 def test_history_returns_safe_errors_for_missing_invalid_and_linked_captures(history_capture: CaptureFiles) -> None:
     path = f"/runs/{history_capture.directory.name}/events"
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         missing_run = client.get("/runs/missing-run/events")
         assert missing_run.status_code == 404
         assert missing_run.json() == {"detail": "Run was not found."}
@@ -132,7 +132,7 @@ def test_stream_uses_last_event_id_on_reconnect(history_capture: CaptureFiles) -
     history_capture.write_result(0)
     path = f"/runs/{history_capture.directory.name}/stream"
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get(path, params={"after": 0}, headers={"Last-Event-ID": "1"})
 
     assert response.status_code == 200
@@ -144,7 +144,7 @@ def test_stream_uses_last_event_id_on_reconnect(history_capture: CaptureFiles) -
 
 def test_history_retries_when_the_worker_has_not_opened_the_trace(history_capture: CaptureFiles) -> None:
     path = f"/runs/{history_capture.directory.name}/events"
-    with TestClient(app) as client, history_capture.track_activity():
+    with TestClient(app, base_url="http://localhost") as client, history_capture.track_activity():
         starting = client.get(path)
         assert starting.status_code == 409
         assert starting.json() == {"detail": "Run capture is starting."}
@@ -162,7 +162,7 @@ def test_stream_ends_when_there_is_no_active_capture_or_final_result(history_cap
         trace.write(record(0, "turn.started"))
     path = f"/runs/{history_capture.directory.name}/stream"
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get(path, params={"after": 1})
 
     assert response.status_code == 200

@@ -26,7 +26,7 @@ def test_listing_reads_metadata_and_orders_conversations(tmp_path: Path, monkeyp
     def no_trace(*args, **kwargs):
         raise AssertionError("Home must not read traces")
     monkeypatch.setattr(CaptureFiles, "read_trace_lines", no_trace)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/threads")
     assert response.status_code == 200
     threads = response.json()["threads"]
@@ -39,7 +39,7 @@ def test_bad_successor_does_not_merge_conversations(tmp_path: Path, monkeypatch)
     first = saved(tmp_path, "first", "11111111-1111-4111-8111-111111111111", datetime(2026, 1, 1, tzinfo=UTC))
     second = saved(tmp_path, "second", "22222222-2222-4222-8222-222222222222", datetime(2026, 1, 2, tzinfo=UTC))
     first.reserve_successor(second)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         assert client.get("/threads").status_code == 503
         assert client.get(f"/threads/by-run/{first.directory.name}").status_code == 503
         assert client.post(f"/runs/{first.directory.name}/continue", json={"prompt": "Next"}).status_code == 503
@@ -54,7 +54,7 @@ def test_legacy_reply_is_recovered_only_for_detail(tmp_path: Path, monkeypatch) 
                     '{"type":"agent_message","text":"Observed reply"}}}\n')
         trace.write('{"elapsed_ns":1,"event":{"type":"turn.completed"}}\n')
     capture.write_result(0, thread_id=UUID("11111111-1111-4111-8111-111111111111"), persistence_confirmed=True)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         listing = client.get("/threads").json()["threads"][0]
         detail = client.get(f"/threads/by-run/{capture.directory.name}").json()
     assert listing["title"] == "Earlier conversation"
