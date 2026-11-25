@@ -1,0 +1,59 @@
+FROM ghcr.io/astral-sh/uv:0.11.3 AS uv
+
+# The official Codex release package, verified against its published SHA-256.
+FROM python:3.13-slim AS codex
+
+ARG CODEX_VERSION=0.171.0
+ARG TARGETARCH
+
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) arch=x86_64; sha=8391d67757496bfd14893eca6cbf0c96994bf2627566ff1f018f70600c9ef6b3 ;; \
+      arm64) arch=aarch64; sha=d8c43bee6cf11b01eb18b95f4d7961092bc40228180808859e70dabb7784c1c9 ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-package-${arch}-unknown-linux-musl.tar.gz"; \
+    python -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], "/tmp/codex.tar.gz")' "$url"; \
+    echo "$sha  /tmp/codex.tar.gz" | sha256sum --check; \
+    mkdir /opt/codex; \
+    tar -xzf /tmp/codex.tar.gz -C /opt/codex
+
+FROM python:3.13-slim
+
+# Tools the agent can use. Its commands have no network access, so nothing can be installed at run time.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends git python3 ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv /uv /usr/local/bin/uv
+COPY --from=codex /opt/codex /opt/codex
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/api-lens-venv \
+    PATH="/opt/api-lens-venv/bin:$PATH"
+
+WORKDIR /app/apps/api-lens
+
+COPY apps/api-lens/pyproject.toml apps/api-lens/uv.lock ./
+RUN uv sync --locked --no-dev --no-cache
+
+COPY apps/api-lens/executor.py ./
+COPY apps/api-lens/src/__init__.py apps/api-lens/src/observability.py ./src/
+COPY apps/api-lens/src/api/ ./src/api/
+COPY apps/api-lens/src/application/ ./src/application/
+COPY apps/api-lens/src/domain/ ./src/domain/
+COPY apps/api-lens/src/infrastructure/ ./src/infrastructure/
+
+# The executor runs as the person's user ID, so it can edit the mounted folder.
+ARG AGENT_LENS_UID=1000
+ARG AGENT_LENS_GID=1000
+RUN install -d -m 0700 -o "$AGENT_LENS_UID" -g "$AGENT_LENS_GID" /executor-data /executor-data/state \
+    && install -d -m 0711 -o "$AGENT_LENS_UID" -g "$AGENT_LENS_GID" /executor-data/ipc \
+    && chmod 0711 /executor-data
+
+USER ${AGENT_LENS_UID}:${AGENT_LENS_GID}
+
+# The key arrives as a Compose secret and reaches the executor on standard input.
+CMD ["sh", "-c", "[ -s /run/secrets/codex_api_key ] || { echo 'Set CODEX_API_KEY in .env or your shell, then run docker compose up again.' >&2; exit 2; }; exec python -m executor --codex-bin /opt/codex/bin/codex --model \"$AGENT_LENS_MODEL\" --data-dir /executor-data --workspace-root /workspace < /run/secrets/codex_api_key"]

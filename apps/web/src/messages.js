@@ -118,7 +118,7 @@ export const t = Object.freeze({
     unnamedFailure: "An action failed.",
   },
   executor: {
-    unavailable: "Executor unavailable. Start the executor on the host and check the socket.",
+    unavailable: "Executor unavailable. Run docker compose up and check the executor logs.",
     check: "Check connection",
   },
   composer: {
@@ -147,8 +147,8 @@ export const t = Object.freeze({
     send: "Send",
     availableAfter: (number) => `Available when turn ${number} finishes.`,
     submitting: "Sending the request…",
-    needsExecutor: "Resuming requires the local executor.",
-    checkingExecutor: "Checking the local executor…",
+    needsExecutor: "Resuming requires the executor.",
+    checkingExecutor: "Checking the executor…",
     reasons: {
       ephemeral: "This run did not save a Codex session.",
       active: "Wait for the run to finish before continuing.",

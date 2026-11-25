@@ -693,7 +693,7 @@ def test_run_requires_a_host_executor(live_http: tuple[httpx.Client, Event], run
     response = backend.post("/runs", json=prompt_body("Read the example."))
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Host executor socket is not configured."}
+    assert response.json() == {"detail": "Executor socket is not configured."}
     assert not (run_workspace / "captures").exists()
 
 

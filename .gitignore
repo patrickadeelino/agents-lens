@@ -13,3 +13,5 @@ __pycache__/
 /.env
 .vite/
 .ruff_cache/
+/workspace/*
+!/workspace/README.md

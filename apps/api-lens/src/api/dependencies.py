@@ -134,7 +134,7 @@ def executor_socket() -> str:
     socket = os.environ.get("AGENT_LENS_EXECUTOR_SOCKET")
     if not socket:
         event_log("run.rejected", "api", "rejected", error_code="executor_unconfigured")
-        raise HTTPException(status_code=503, detail="Host executor socket is not configured.")
+        raise HTTPException(status_code=503, detail="Executor socket is not configured.")
     return socket
 
 

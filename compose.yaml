@@ -1,5 +1,7 @@
 services:
   frontend:
+    # Rebuild on every start, so `docker compose up` never runs a stale image.
+    pull_policy: build
     build: ./apps/web
     depends_on:
       backend:
@@ -8,27 +10,25 @@ services:
       - "127.0.0.1:${AGENT_LENS_PORT:-8080}:80"
 
   backend:
+    # Rebuild on every start, so `docker compose up` never runs a stale image.
+    pull_policy: build
     build:
       context: .
       dockerfile: apps/api-lens/Dockerfile
-    command: ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      executor:
+        condition: service_healthy
     environment:
       AGENT_LENS_OTEL_ENABLED: "${AGENT_LENS_OTEL_ENABLED:-0}"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       AGENT_LENS_EXECUTOR_SOCKET: "/executor-ipc/executor.sock"
     volumes:
-      - type: bind
-        source: ./apps/api-lens
-        target: /app/apps/api-lens
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${AGENT_LENS_HOST_SOCKET_DIR:-./.local/codex-executor/catalog/ipc}
+      - type: volume
+        source: executor-ipc
         target: /executor-ipc
         read_only: true
-        bind:
-          create_host_path: false
+        volume:
+          nocopy: true
       - type: volume
         source: captures
         target: /app/.captures
@@ -38,6 +38,54 @@ services:
         - python
         - -c
         - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=4).close()"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  executor:
+    # Rebuild on every start, so `docker compose up` never runs a stale image.
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: apps/api-lens/Dockerfile.executor
+      args:
+        AGENT_LENS_UID: "${AGENT_LENS_UID:-1000}"
+        AGENT_LENS_GID: "${AGENT_LENS_GID:-1000}"
+    init: true
+    environment:
+      AGENT_LENS_MODEL: "${AGENT_LENS_MODEL:-gpt-6.2-sol}"
+      AGENT_LENS_OTEL_ENABLED: "${AGENT_LENS_OTEL_ENABLED:-0}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    secrets:
+      - codex_api_key
+    cap_drop:
+      - ALL
+    # Codex isolates each command with Bubblewrap, which Docker's default AppArmor and
+    # seccomp profiles block. Only this service relaxes them. See the README.
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=unconfined
+      - seccomp=unconfined
+    volumes:
+      - type: bind
+        source: ${AGENT_LENS_WORKSPACE:-./workspace}
+        target: /workspace
+        bind:
+          create_host_path: false
+      - type: volume
+        source: executor-ipc
+        target: /executor-data/ipc
+      - type: volume
+        source: executor-state
+        target: /executor-data/state
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import socket; s = socket.socket(socket.AF_UNIX); s.connect('/executor-data/ipc/executor.sock');
+          s.sendall(b'GET /ready HTTP/1.0\r\n\r\n'); assert b' 204 ' in s.recv(64)
       interval: 5s
       timeout: 3s
       retries: 10
@@ -74,4 +122,10 @@ services:
 
 volumes:
   captures:
+  executor-ipc:
+  executor-state:
   observability-data:
+
+secrets:
+  codex_api_key:
+    environment: CODEX_API_KEY

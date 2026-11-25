@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from executor import prepare_workspace_root
 from src.infrastructure.workspace_folders import (
     FolderUnavailable,
     list_folders,
@@ -42,11 +41,3 @@ def test_refuses_paths_outside_the_visible_tree(root: Path, path: str) -> None:
 def test_reports_a_folder_that_disappeared(root: Path) -> None:
     with pytest.raises(FolderUnavailable):
         list_folders(root / "missing")
-
-
-def test_a_requested_root_must_already_exist(root: Path) -> None:
-    assert prepare_workspace_root(root) == root
-    with pytest.raises(OSError):
-        prepare_workspace_root(root / "missing")
-    with pytest.raises(OSError):
-        prepare_workspace_root(root / "notes.txt")

@@ -48,7 +48,6 @@ from src.observability import (
 )
 
 MAX_EVENT_BYTES = 8 * 1024 * 1024
-DEFAULT_WORKSPACE_ROOT = Path.home() / "agent-lens-workspaces"
 
 app = observed_app(
     "Agent Lens Executor", "agent-lens-executor", {("POST", "/run"): "executor.http"}, private=True,
@@ -257,18 +256,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Start the host executor on its private Unix socket.")
     parser.add_argument("--codex-bin", required=True, type=Path)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--data-dir", required=True, type=Path, help="Private Codex state and the API socket.")
     parser.add_argument(
-        "--workspace-root", type=Path,
-        help=f"Only this folder and its subfolders can be chosen. Default: {DEFAULT_WORKSPACE_ROOT}",
+        "--workspace-root", required=True, type=Path, help="Only this folder and its subfolders can be chosen.",
     )
     args = parser.parse_args()
     key = sys.stdin.readline().strip()
     if not key or not key.isascii() or any(char.isspace() for char in key):
         parser.error("Provide the Codex API key via standard input.")
-    state_dir, socket = prepare_executor_dirs(Path(__file__).resolve().parents[2])
-    try:
-        workspace_root = prepare_workspace_root(args.workspace_root)
-    except OSError:
+    state_dir, socket = prepare_executor_dirs(args.data_dir)
+    workspace_root = args.workspace_root.resolve()
+    if not workspace_root.is_dir():
         parser.error("The workspace root must be an existing folder.")
     app.state.catalog_run = ExecutorConfig(
         binary=args.codex_bin.resolve(strict=True),
@@ -277,29 +275,16 @@ def main() -> None:
         api_key=key,
         workspace_root=workspace_root,
     )
-    print(f"Workspace root: {workspace_root}", flush=True)
     uvicorn.run(app, uds=str(socket), access_log=False)
 
 
-def prepare_workspace_root(requested: Path | None) -> Path:
-    """Resolve the chosen root, creating only the default one with a folder to try it in."""
-    if requested is None:
-        (DEFAULT_WORKSPACE_ROOT / "demo").mkdir(parents=True, exist_ok=True)
-        requested = DEFAULT_WORKSPACE_ROOT
-    root = requested.expanduser().resolve(strict=True)
-    if not root.is_dir():
-        raise NotADirectoryError(root)
-    return root
-
-
-def prepare_executor_dirs(project: Path) -> tuple[Path, Path]:
-    project = project.resolve(strict=True)
-    lab = project / ".local" / "codex-executor" / "catalog"
-    state, ipc = lab / "state", lab / "ipc"
-    for path in (lab, state, ipc):
+def prepare_executor_dirs(data_dir: Path) -> tuple[Path, Path]:
+    base = data_dir.resolve()
+    state, ipc = base / "state", base / "ipc"
+    for path in (base, state, ipc):
         if path.resolve() != path:
             raise ValueError("Executor paths must not contain symlinks.")
-    lab.mkdir(mode=0o700, parents=True, exist_ok=True)
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
     state.mkdir(mode=0o700, exist_ok=True)
     ipc.mkdir(mode=0o700, exist_ok=True)
     # The backend container uses a different UID and mounts only this directory.

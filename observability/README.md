@@ -4,28 +4,20 @@ Agent Lens writes structured operational logs to stderr for live runs. The optio
 
 ## Start the stack
 
-Use the repository's ignored `.env` for local settings. On a fresh checkout, copy `.env.example` to `.env` and fill in the local OpenObserve password. For an existing `.env`, add the observability settings from the template. Keep the Codex API key out of this file; the host executor reads it from standard input, as shown in the [root README](../README.md). OpenObserve requires at least eight characters including upper and lower case, a number, and a special character.
+Add these settings to the repository's ignored `.env`, next to your `CODEX_API_KEY`. OpenObserve requires a password with at least eight characters including upper and lower case, a number, and a special character.
 
 ```sh
-docker compose up -d --build
+COMPOSE_PROFILES=observability
+AGENT_LENS_OTEL_ENABLED=1
+ZO_ROOT_USER_EMAIL=observer@example.com
+ZO_ROOT_USER_PASSWORD=
 ```
-
-Compose loads `.env` automatically. With `COMPOSE_PROFILES=observability` and `AGENT_LENS_OTEL_ENABLED=1`, the application starts with the Collector and OpenObserve. A checkout with the default Compose settings starts with local JSON logs. For live runs, start the existing executor on the host and add its socket directory to `.env` or export the following settings. Then use the same `docker compose up` command.
 
 ```sh
-AGENT_LENS_HOST_SOCKET_DIR=/absolute/path/to/the/socket-directory
+docker compose up --build --wait
 ```
 
-Use the directory containing `executor.sock`. The backend mounts it read-only and saves live captures in the `captures` volume.
-
-Set these variables in the shell used to start the existing host executor.
-
-```sh
-export AGENT_LENS_OTEL_ENABLED=1
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318
-```
-
-The backend sends OTLP to `http://otel-collector:4318` over the Compose network. Both published ports bind to loopback. Set `AGENT_LENS_OTLP_PORT` or `AGENT_LENS_OPENOBSERVE_PORT` to override the default host ports `14318` and `15080`. Use the configured host OTLP port in the executor's endpoint.
+The application then starts with the Collector and OpenObserve. Without these settings it logs to stderr only. The backend and the executor send OTLP to `http://otel-collector:4318` over the Compose network. Both published ports bind to loopback. Set `AGENT_LENS_OTLP_PORT` or `AGENT_LENS_OPENOBSERVE_PORT` to override the default host ports `14318` and `15080`.
 
 ## Inspect a run
 

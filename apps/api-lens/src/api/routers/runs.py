@@ -129,7 +129,7 @@ def readiness() -> Response:
     try:
         ExecutorClient(executor_socket()).check_ready()
     except (HTTPException, httpx.HTTPError) as error:
-        raise HTTPException(status_code=503, detail="Executor unavailable. Start the executor on the host.") from error
+        raise HTTPException(status_code=503, detail="Executor unavailable. Check the executor container.") from error
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
