@@ -2,6 +2,8 @@
 
 Agent Lens is a local web interface for watching a coding agent work. Choose a folder, send a prompt and follow what Codex does as it happens: messages, shell commands, file changes, failures and subagents.
 
+![A live run: choosing a folder, sending a prompt and following the trajectory as Codex runs the tests, changes a file and asks a subagent to review it.](docs/images/live-run.gif)
+
 - **Live trajectory** of each turn, with command output and exit codes.
 - **Failures and unconfirmed results** kept visible, separate from the turn's own outcome.
 - **Subagents** shown as branches of the turn that started them.
