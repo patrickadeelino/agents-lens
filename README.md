@@ -54,7 +54,7 @@ AGENT_LENS_WORKSPACE=/absolute/path/to/your/projects
 
 On Linux, if `id -u` or `id -g` is not `1000`, set `AGENT_LENS_UID` and `AGENT_LENS_GID` in `.env` before the first start, so the agent can edit your files.
 
-The agent's commands have no network access and can use `git`, `rg` and Python 3. To give it other tools, add them to [`Dockerfile.executor`](apps/api-lens/Dockerfile.executor).
+The agent's commands have no network access and can use `git`, `rg` and Python 3 (as `python` or `python3`). To give it other tools, add them to [`Dockerfile.executor`](apps/api-lens/Dockerfile.executor).
 
 ## Architecture
 

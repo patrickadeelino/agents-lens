@@ -22,7 +22,7 @@ FROM python:3.13-slim
 
 # Tools the agent can use. Its commands have no network access, so nothing can be installed at run time.
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends git python3 ripgrep \
+    && apt-get install --yes --no-install-recommends git python3 python-is-python3 ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /usr/local/bin/uv

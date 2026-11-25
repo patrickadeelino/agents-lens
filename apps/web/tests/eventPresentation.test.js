@@ -107,3 +107,18 @@ test("file paths are shown relative to the conversation's folder only when they 
   assert.equal(relativePath("/etc/hosts", "/workspace/api"), "/etc/hosts");
   assert.equal(relativePath("catalog.py", undefined), "catalog.py");
 });
+
+test("compound commands are not titled after their first step", () => {
+  assert.equal(commandTitle("ls -la; python -m unittest -v"), null);
+  assert.equal(commandTitle("rg --files | head -40"), null);
+  assert.equal(commandTitle("find . -name x && rm x"), null);
+  assert.equal(commandTitle("rg -n 'load|save' catalog.py"), "Search");
+  assert.equal(commandTitle("zsh -lc 'grep \"a;b\" README.md'"), "Search");
+});
+
+test("reasoning without a summary is kept only in the All view", () => {
+  const empty = { event: { type: "item.completed", item: { type: "reasoning", text: "" } } };
+  const written = { event: { type: "item.completed", item: { type: "reasoning", text: "Check the filter." } } };
+  assert.deepEqual(trajectoryRows([empty, written], "essential"), [written]);
+  assert.deepEqual(trajectoryRows([empty, written], "all"), [empty, written]);
+});

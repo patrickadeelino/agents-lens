@@ -157,12 +157,17 @@ function isEmptyMessageStart(entry) {
   return entry.event?.type === "item.started" && item?.type === "agent_message" && !(typeof item.text === "string" && item.text.trim());
 }
 
+function isEmptyReasoning(entry) {
+  const item = entry.event?.item;
+  return item?.type === "reasoning" && !(typeof item.text === "string" && item.text.trim());
+}
+
 export function trajectoryRows(rows, view) {
   if (view === "failures") return rows.filter((entry) => entry.failed);
 
   const visible = [];
   for (const entry of rows) {
-    if (view !== "all" && (entry.startup || isEmptyMessageStart(entry))) continue;
+    if (view !== "all" && (entry.startup || isEmptyMessageStart(entry) || isEmptyReasoning(entry))) continue;
     const title = entry.startup ? t.common.startupGroup : null;
     if (!title && (view === "all" || !entry.technical)) {
       visible.push(entry);
@@ -179,6 +184,7 @@ export function commandTitle(command) {
   if (typeof command !== "string") return null;
   // Interpret only exact forms with no shell expansion or secondary command.
   const simpleCommand = displayCommand(command);
+  if (/[;&|\n]/.test(simpleCommand.replace(/'[^']*'|"(?:\\.|[^"\\])*"|\\./g, ""))) return null;
   const read = /^cat (?:-- )?((?:<folder>\/)?[A-Za-z0-9_./~][A-Za-z0-9_./-]*|"[^"$\x60\\]+"|'[^']+')$/.exec(simpleCommand);
   if (read) {
     const file = read[1].replace(/^(['"])(.*)\1$/, "$2");

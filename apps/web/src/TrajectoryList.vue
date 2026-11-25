@@ -28,7 +28,7 @@ function toggle(key, event) {
         @toggle="toggle(entry.key, $event)">
         <summary>
           <span class="delegation-name">{{ entry.label }}</span>
-          <span class="delegation-meta">{{ t.common.actions(entry.actionCount) }}<template v-if="entry.duration"> · {{ entry.duration }}</template></span>
+          <span v-if="entry.actionCount" class="delegation-meta">{{ t.common.actions(entry.actionCount) }}<template v-if="entry.duration"> · {{ entry.duration }}</template></span>
           <span class="delegation-state" :data-state="entry.state">{{ branchStateLabel(entry.state) }}</span>
           <span v-if="entry.summary" class="delegation-result">{{ entry.summary }}</span>
         </summary>
