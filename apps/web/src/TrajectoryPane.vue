@@ -93,12 +93,14 @@ const expanded = computed(() => {
   return data.value.failures[0]?.key;
 });
 const duration = computed(() => {
-  if (props.summary) return formatDuration(props.summary.observed_duration_ns);
+  if (props.summary) return formatDuration(props.summary.total_duration_ns ?? props.summary.observed_duration_ns);
   const liveElapsed = props.active && lastArrival.value !== null && props.connection === "Ao vivo"
     ? Math.max(0, now.value - lastArrival.value) : 0;
   return data.value.lastOffset > data.value.firstOffset
     ? observedRunDuration(data.value.firstOffset, data.value.lastOffset, liveElapsed) : null;
 });
+const durationLabel = computed(() =>
+  props.summary?.total_duration_ns != null ? "Duração total" : "Duração observada");
 const switchToActive = computed(() => !props.active && props.activeTurnNumber != null);
 const headingText = computed(() => props.turnNumber != null ? `Trajetória · Turno ${props.turnNumber}` : "Trajetória");
 const hasObservedActions = computed(() => props.summary ? actions.value != null : data.value.actions.length > 0
@@ -309,7 +311,7 @@ onUnmounted(() => {
         <div class="trajectory-metric-summary">
           <dl class="trajectory-metrics">
             <div v-if="status"><dt>{{ active && connection ? connection : "Estado do turno" }}</dt><dd>{{ status }}</dd></div>
-            <div v-if="duration"><dt>{{ partial ? "Duração · trecho observado" : "Duração · medida pelo app" }}</dt><dd>{{ duration }}</dd></div>
+            <div v-if="duration"><dt>{{ durationLabel }}</dt><dd>{{ duration }}</dd></div>
             <div v-if="hasObservedActions">
               <dt>{{ partial ? "Trecho carregado" : active ? "Observadas até agora" : "Observadas" }}</dt>
               <dd>{{ actions }} {{ actions === 1 ? "ação" : "ações" }}<template v-if="failures != null && (failures || (!active && !partial))"> · {{ failures }} {{ failures === 1 ? "falha" : "falhas" }}</template></dd>

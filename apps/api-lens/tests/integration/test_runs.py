@@ -101,6 +101,8 @@ reply(opening, {
 turn = request("turn/start")
 assert turn["params"]["threadId"] == thread_id
 prompt = turn["params"]["input"][0]["text"]
+if prompt == "measure total duration":
+    time.sleep(0.3)
 reply(turn, {"turn": {"id": "current-turn"}})
 
 
@@ -729,8 +731,9 @@ def test_run_finishes_capture_after_the_client_disconnects(
     monkeypatch.setattr(capture_run, "Queue", TrackingQueue)
     backend, request_finished = live_http
     span_exporter, log_exporter = telemetry_exports
-    with backend.stream("POST", "/runs", json=prompt_body("Read the example.")) as response:
+    with backend.stream("POST", "/runs", json=prompt_body("measure total duration")) as response:
         assert response.status_code == 200
+        run_id = response.headers["X-Run-ID"]
         frames = response.iter_lines()
         kind, first = next_frame(frames)
         assert kind == "record"
@@ -750,7 +753,10 @@ def test_run_finishes_capture_after_the_client_disconnects(
             pytest.fail("The capture did not finish after disconnect")
         sleep(0.01)
 
-    assert json.loads(result.read_text(encoding="utf-8"))["exit_code"] == 0
+    saved = json.loads(result.read_text(encoding="utf-8"))
+    assert saved["exit_code"] == 0
+    summary = saved["summary"]
+    assert summary["total_duration_ns"] - summary["observed_duration_ns"] >= 300_000_000
     trace = directory / "events.timed.jsonl"
     records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
     assert records[0] == first
@@ -774,6 +780,8 @@ def test_run_finishes_capture_after_the_client_disconnects(
     assert sse_end is not None and write_start is not None and sse_end < write_start
     assert (spans["capture.write_result"].attributes or {})["agent_lens.outcome"] == "completed"
     assert_correlated_capture_logs(log_exporter, run_workspace, directory.name)
+    thread = backend.get(f"/threads/by-run/{run_id}").json()
+    assert thread["turns"][0]["summary"]["total_duration_ns"] == summary["total_duration_ns"]
 
 
 def assert_live_span_tree(span_exporter: InMemorySpanExporter, run_id: str) -> dict[str, ReadableSpan]:
@@ -865,7 +873,10 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
     detail = backend.get(f"/threads/by-run/{directory.name}")
     assert detail.status_code == 200
     assert detail.json()["thread_id"] is None
-    assert detail.json()["turns"][0]["status"] == "failed"
+    turn = detail.json()["turns"][0]
+    assert turn["status"] == "failed"
+    assert turn["summary"]["total_duration_ns"] > 0
+    assert turn["summary"]["observed_duration_ns"] is None
 
 
     stderr = capsys.readouterr().err

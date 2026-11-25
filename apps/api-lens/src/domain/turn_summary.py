@@ -32,6 +32,7 @@ class TurnSummary(BaseModel):
     partial: bool = False
     tokens: dict[str, int]
     observed_duration_ns: int | None = None
+    total_duration_ns: int | None = Field(default=None, ge=0)
     failure_item_ids: list[str] = Field(default_factory=list)
     files: list[ChangedFile]
     tests: list[TestExecution]
@@ -113,13 +114,13 @@ class TurnEvidence:
         if _TEST.match(candidate) and not re.search(r'[;&|<>\n`$]', candidate):
             self._tests[key] = TestExecution(item_id=key[1], status=command.status, exit_code=command.exit_code)
 
-    def finish(self, *, interrupted: bool) -> TurnSummary:
+    def finish(self, *, interrupted: bool, total_duration_ns: int | None = None) -> TurnSummary:
         partial = interrupted or self._unidentified
         files = {file.path: file for key, changes in self._files.items() if key not in self._conflicts for file in changes}
         return TurnSummary(
             actions=len(self._actions) if self._actions or (self._offsets and not partial) else None,
             failures=len(self._failed) if self._offsets and (self._failed or not partial) else None,
-            partial=partial, tokens=self._tokens,
+            partial=partial, tokens=self._tokens, total_duration_ns=total_duration_ns,
             observed_duration_ns=self._offsets[-1] - self._offsets[0] if len(self._offsets) == 2 else None,
             failure_item_ids=list(dict.fromkeys(item_id for kind, item_id in self._terminal if (kind, item_id) in self._failed)),
             files=list(files.values()), tests=[test for key, test in self._tests.items() if key not in self._conflicts],

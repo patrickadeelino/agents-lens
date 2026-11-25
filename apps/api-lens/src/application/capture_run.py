@@ -85,6 +85,7 @@ class CaptureRun:
         self, prompt: str, execute: ExecutePrompt, capture: EventCapture, output: CaptureOutput,
         *, expected_thread: UUID | None = None,
     ) -> None:
+        self._accepted_at_ns = monotonic_ns()
         self._evidence = TurnEvidence()
         self._prompt = prompt
         self._execute = execute
@@ -149,7 +150,11 @@ class CaptureRun:
                     exit_code, thread_id=thread_id, persistence_confirmed=persistence_confirmed,
                     assistant_markdown=self._assistant_markdown, last_turn=self._last_turn, finished_at=datetime.now(UTC),
                     conflicting_thread_id=self._conflicting_thread_id,
-                    capture_failed=capture_failed, summary=self._evidence.finish(interrupted=capture_failed or exit_code is None),
+                    capture_failed=capture_failed,
+                    summary=self._evidence.finish(
+                        interrupted=capture_failed or exit_code is None,
+                        total_duration_ns=monotonic_ns() - self._accepted_at_ns,
+                    ),
                 )
             except OSError:
                 finish_span(span, "failed", error_code="capture_result_write_failed")
