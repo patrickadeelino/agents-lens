@@ -50,6 +50,7 @@ def get_prompt_capture(request: NewPromptRequest) -> PromptCapture:
         workspace = selected_workspace(socket, request.workspace_id)
     elif request.workspace_run_id is not None:
         workspace = saved_workspace(request.workspace_run_id)
+        check_resume_workspace(socket, workspace)
     else:
         raise HTTPException(status_code=422, detail="Select a folder to start the conversation.")
     output = create_capture(request.prompt, workspace=workspace)
@@ -103,7 +104,7 @@ def check_resume_workspace(socket: str, workspace: str) -> None:
     except httpx.HTTPStatusError as error:
         if error.response.status_code == 409:
             raise HTTPException(
-                status_code=422, detail="This conversation's folder is unavailable. Restore the folder and try again.",
+                status_code=422, detail="This conversation's folder is unavailable or outside the workspace root. Restore the folder and try again.",
             ) from error
         raise HTTPException(status_code=503, detail="Executor unavailable.") from error
     except httpx.RequestError as error:

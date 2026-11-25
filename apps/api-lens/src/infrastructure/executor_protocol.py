@@ -3,14 +3,29 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SESSION_PERSISTENCE_HEADER = "X-Agent-Lens-Session-Persistence"
+MAX_FOLDER_PATH = 4096
 
 
 class WorkspaceSelection(BaseModel):
     id: UUID
     path: str
+
+
+class FolderRequest(BaseModel):
+    """A folder named relative to the workspace root; an empty path is the root."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    path: str = Field(max_length=MAX_FOLDER_PATH)
+
+
+class FolderListing(BaseModel):
+    root: str
+    path: str
+    folders: list[str]
+    truncated: bool
 
 
 class WorkspaceCheck(BaseModel):

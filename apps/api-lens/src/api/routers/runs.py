@@ -5,10 +5,10 @@ from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from time import monotonic_ns
-from typing import Annotated, Literal
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from opentelemetry.trace import INVALID_SPAN, Span, use_span
 from starlette.requests import ClientDisconnect
@@ -23,7 +23,6 @@ from src.api.dependencies import (
 from src.api.sse import end_frame, record_frame
 from src.application.capture_run import CaptureResult, CaptureRun, FlushedRecord
 from src.infrastructure.executor_client import ExecutorClient
-from src.infrastructure.executor_protocol import WorkspaceSelection
 from src.observability import (
     EventProgress,
     Outcome,
@@ -132,18 +131,6 @@ def readiness() -> Response:
     except (HTTPException, httpx.HTTPError) as error:
         raise HTTPException(status_code=503, detail="Executor unavailable. Start the executor on the host.") from error
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
-
-
-@router.post("/workspace-picker", response_model=WorkspaceSelection)
-def select_workspace(x_agent_lens: Annotated[Literal["workspace-picker"], Header()]) -> WorkspaceSelection | Response:
-    try:
-        selection = ExecutorClient(executor_socket()).select_workspace()
-    except httpx.HTTPStatusError as error:
-        detail = error.response.json().get("detail")
-        raise HTTPException(status_code=error.response.status_code, detail=detail) from error
-    except (httpx.RequestError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="Folder picker is unavailable.") from error
-    return selection if selection else Response(status_code=204)
 
 
 @router.post("/runs", response_class=StreamingResponse, responses=RUN_RESPONSE)

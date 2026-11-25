@@ -1,12 +1,12 @@
 # Agent Lens
 
-Agent Lens is a local web interface for Codex App Server. Select a scratch directory, send a prompt, and follow the agent's messages, tool activity and subagents live. The browser can reconnect to a running turn, and saved conversations can continue in the same Codex thread.
+Agent Lens is a local web interface for Codex App Server. Select a scratch folder, send a prompt, and follow the agent's messages, tool activity and subagents live. The browser can reconnect to a running turn, and saved conversations can continue in the same Codex thread.
 
 The app reports elapsed time measured by the backend and token counts reported by Codex.
 
 ## Requirements
 
-- A Linux graphical session with Zenity installed at `/usr/bin/zenity`.
+- Linux. Other systems have not been tested.
 - Docker with the Compose plugin, Python 3.13 and `uv`.
 - A native Codex executable and a valid OpenAI API key. The live flow was validated with Codex **0.171.0** and `gpt-6.2-sol`. Use the native executable path for `--codex-bin`.
 
@@ -25,6 +25,8 @@ printf '%s\n' "$CODEX_API_KEY" | uv run --no-sync python -m executor \
   --codex-bin "$CODEX_BIN" --model gpt-6.2-sol
 ```
 
+The interface can only choose the workspace root and its subfolders. The default root is `~/agent-lens-workspaces`, created on first start with an empty `demo` folder. To use another existing folder, add `--workspace-root /absolute/path` to the command.
+
 In a second terminal at the repository root, start the application. The executor creates the IPC directory before Compose mounts it.
 
 ```bash
@@ -35,7 +37,7 @@ curl --fail --silent --show-error http://127.0.0.1:8080/ready
 
 The readiness endpoint responds with HTTP 204 when the API can reach the host executor. If the interface reports **Executor unavailable**, check that the executor is running and that Compose mounts its IPC directory. Then use **Check connection**.
 
-Open [Agent Lens](http://127.0.0.1:8080/). Select a disposable folder outside the Agent Lens repository, send a prompt, and open **View trajectory** on the turn. The executor can modify the selected files. The service binds to loopback. Keep prompts, command output, local captures and Codex state private when sharing screenshots or recordings.
+Open [Agent Lens](http://127.0.0.1:8080/). Use **Select folder** to choose a disposable folder outside the Agent Lens repository, send a prompt, and open **View trajectory** on the turn. The executor can modify the selected files. The service binds to loopback, accepts only the `localhost` and `127.0.0.1` host names and has no authentication. Keep prompts, command output, local captures and Codex state private when sharing screenshots or recordings.
 
 To stop the local application, run `docker compose down` at the repository root and stop the executor with Ctrl+C. Compose keeps the capture volume. The [optional observability setup](observability/README.md) describes logs and traces.
 

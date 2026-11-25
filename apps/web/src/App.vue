@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from "vue";
 import ConversationSidebar from "./ConversationSidebar.vue";
 import ConversationTurn from "./ConversationTurn.vue";
+import FolderPicker from "./FolderPicker.vue";
 import HistoricalTrajectory from "./HistoricalTrajectory.vue";
 import TrajectoryPane from "./TrajectoryPane.vue";
 import { inspectionUrl, resolveInspectedRun, workspaceName } from "./conversationNavigation.js";
@@ -36,7 +37,6 @@ const busy = ref(false);
 const composerError = ref("");
 const selectedWorkspace = ref(null);
 const pickingWorkspace = ref(false);
-const workspaceError = ref("");
 const executorReady = ref(null);
 const checkingExecutor = ref(false);
 const continuationError = ref("");
@@ -261,6 +261,7 @@ function resetLive(runId = null) {
 }
 
 function resetView() {
+  pickingWorkspace.value = false;
   locationRequest?.abort();
   cancelOperation();
   resetLive();
@@ -295,7 +296,7 @@ async function focusPrompt() {
 
 function newConversation(group = null) {
   selectedWorkspace.value = group ? { path: group.path, runId: group.runId } : null;
-  workspaceError.value = "";
+  pickingWorkspace.value = false;
   if (view.value !== "home" || window.location.search || window.location.hash) writeLocation("/", null);
   closeDrawer(false);
   resetView();
@@ -495,26 +496,14 @@ async function checkExecutor() {
   }
 }
 
-async function chooseWorkspace() {
-  if (!executorReady.value || pickingWorkspace.value || busy.value) return;
+function chooseWorkspace() {
+  if (!executorReady.value || busy.value) return;
   pickingWorkspace.value = true;
-  workspaceError.value = "";
-  try {
-    const response = await fetch("/workspace-picker", {
-      method: "POST", headers: { "X-Agent-Lens": "workspace-picker" },
-    });
-    if (response.status === 204) return;
-    const payload = await response.json();
-    if (!response.ok) {
-      if (response.status === 503) checkExecutor();
-      throw new Error(payload.detail);
-    }
-    selectedWorkspace.value = payload;
-  } catch (error) {
-    workspaceError.value = error.message;
-  } finally {
-    pickingWorkspace.value = false;
-  }
+}
+
+function onWorkspaceSelected(selection) {
+  selectedWorkspace.value = selection;
+  pickingWorkspace.value = false;
 }
 
 async function sendPrompt(text, origin = null) {
@@ -689,7 +678,7 @@ onUnmounted(() => {
             @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
           <div class="workspace-summary">
             <button type="button" class="secondary compact-button" :disabled="!executorReady || busy || pickingWorkspace" @click="chooseWorkspace">
-              {{ pickingWorkspace ? t.composer.selecting : t.composer.selectFolder }}
+              {{ t.composer.selectFolder }}
             </button>
             <p v-if="selectedWorkspace" class="workspace-path">{{ selectedWorkspace.path }}</p>
           </div>
@@ -699,7 +688,6 @@ onUnmounted(() => {
             </button>
             <kbd>{{ t.composer.shortcut }}</kbd>
           </div>
-          <p v-if="workspaceError" class="composer-status" role="alert">{{ workspaceError }}</p>
           <p v-if="composerError" class="composer-status" role="alert">{{ t.composer.startFailed(composerError) }}</p>
         </form>
       </section>
@@ -760,5 +748,7 @@ onUnmounted(() => {
         @close="closeInspection" @call="changeActionCall" @scroll="rememberScroll" @announce="announce"
         @retry="resumeObservation(activeRunId)" />
     </div>
+    <FolderPicker v-if="pickingWorkspace" @select="onWorkspaceSelected" @close="pickingWorkspace = false"
+      @unavailable="checkExecutor" />
   </div>
 </template>

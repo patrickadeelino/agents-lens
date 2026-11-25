@@ -5,6 +5,7 @@ from asyncio import Queue
 from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC
 from itertools import pairwise
 from pathlib import Path
@@ -349,7 +350,7 @@ def run_config(run_workspace: Path) -> CatalogRun:
     state = run_workspace / "state"
     state.mkdir()
     return CatalogRun(
-        binary=stub, state_dir=state, workspace=example,
+        binary=stub, state_dir=state, workspace=example, workspace_root=run_workspace,
         model="test-model", api_key="not-a-real-key",
     )
 
@@ -528,21 +529,23 @@ def test_controlled_turns_edit_same_workspace(live_http: tuple[httpx.Client, Eve
 
 
 @pytest.mark.usefixtures("executor_socket")
-def test_picker_runs_in_the_selected_original_directory(
-    live_http: tuple[httpx.Client, Event], run_workspace: Path, tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_chosen_folder_runs_in_the_original_directory(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    directory = tmp_path / "projeto original"
-    directory.mkdir()
-
-    async def select_directory() -> Path:
-        return directory
-
-    monkeypatch.setattr(executor, "pick_directory", select_directory)
+    directory = run_workspace / "projects" / "original project"
+    directory.mkdir(parents=True)
     monkeypatch.setattr(executor, "workspace_selections", {})
     backend, _ = live_http
-    assert backend.post("/workspace-picker").status_code == 422
-    selection = backend.post("/workspace-picker", headers={"X-Agent-Lens": "workspace-picker"})
+    listing = backend.get("/folders", params={"path": "projects"})
+    assert listing.json() == {
+        "root": str(run_workspace), "path": "projects", "folders": ["original project"], "truncated": False,
+    }
+    assert backend.get("/folders", params={"path": "../"}).status_code == 409
+    choice = {"path": "projects/original project"}
+    assert backend.post("/folders", json=choice).status_code == 422
+    header = {"X-Agent-Lens": "folder-selection"}
+    assert backend.post("/folders", json={"path": ".."}, headers=header).status_code == 409
+    selection = backend.post("/folders", json=choice, headers=header)
     assert selection.status_code == 200
     assert selection.json()["path"] == str(directory)
 
@@ -579,6 +582,23 @@ def test_readiness_checks_the_host_executor(
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "missing.sock"))
     assert backend.get("/ready").status_code == 503
     assert backend.get("/threads").json() == {"threads": []}
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_a_saved_folder_outside_the_root_cannot_be_used(
+    live_http: tuple[httpx.Client, Event], run_config: CatalogRun, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _ = live_http
+    first = backend.post("/runs", json=prompt_body("save marker: niobium")).headers["X-Run-ID"]
+    narrower = run_config.workspace_root / "elsewhere"
+    narrower.mkdir()
+    narrowed = replace(run_config, workspace_root=narrower)
+    monkeypatch.setattr(executor, "configured_run", lambda: narrowed)
+    follow_up = backend.post(f"/runs/{first}/continue", json={"prompt": "recall the marker"})
+    assert follow_up.status_code == 422
+    sibling = backend.post("/runs", json={"prompt": "new conversation", "workspace_run_id": first})
+    assert sibling.status_code == 422
+    assert len(backend.get("/threads").json()["threads"]) == 1
 
 
 @pytest.mark.usefixtures("executor_socket")

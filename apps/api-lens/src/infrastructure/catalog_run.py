@@ -14,6 +14,7 @@ class ExecutorConfig:
     state_dir: Path
     model: str
     api_key: str = field(repr=False)
+    workspace_root: Path
 
 
 @dataclass(frozen=True, kw_only=True)

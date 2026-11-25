@@ -25,6 +25,7 @@ from src.observability import (
 from .executor_protocol import (
     SESSION_PERSISTENCE_HEADER,
     ExecutorRequest,
+    FolderListing,
     RunError,
     RunExit,
     RunOutput,
@@ -44,9 +45,13 @@ class ExecutorClient:
     def check_workspace(self, workspace: str) -> None:
         self._workspace_request("POST", "/workspace-check", timeout=2, payload={"workspace": workspace})
 
-    def select_workspace(self) -> WorkspaceSelection | None:
-        response = self._workspace_request("POST", "/workspace-picker", timeout=130)
-        return None if response.status_code == 204 else WorkspaceSelection.model_validate_json(response.content)
+    def list_folders(self, path: str) -> FolderListing:
+        response = self._workspace_request("GET", "/folders", timeout=5, params={"path": path})
+        return FolderListing.model_validate_json(response.content)
+
+    def select_folder(self, path: str) -> WorkspaceSelection:
+        response = self._workspace_request("POST", "/folders", timeout=5, payload={"path": path})
+        return WorkspaceSelection.model_validate_json(response.content)
 
     def workspace(self, selection_id: UUID) -> str:
         return WorkspaceSelection.model_validate_json(
@@ -55,12 +60,13 @@ class ExecutorClient:
 
     def _workspace_request(
         self, method: str, path: str, *, timeout: int, payload: dict[str, str] | None = None,
+        params: dict[str, str] | None = None,
     ) -> httpx.Response:
         with httpx.Client(
             transport=httpx.HTTPTransport(uds=self._socket),
             base_url="http://executor-host", timeout=timeout, trust_env=False,
         ) as client:
-            return client.request(method, path, json=payload).raise_for_status()
+            return client.request(method, path, json=payload, params=params).raise_for_status()
 
     def run(
         self, prompt: str, on_stdout: StdoutConsumer, *,

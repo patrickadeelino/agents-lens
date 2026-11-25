@@ -26,11 +26,18 @@ from src.infrastructure.catalog_run import CatalogRun, ExecutorConfig
 from src.infrastructure.executor_protocol import (
     SESSION_PERSISTENCE_HEADER,
     ExecutorRequest,
+    FolderListing,
+    FolderRequest,
     RunError,
     RunExit,
     RunOutput,
     WorkspaceCheck,
     WorkspaceSelection,
+)
+from src.infrastructure.workspace_folders import (
+    FolderUnavailable,
+    list_folders,
+    resolve_folder,
 )
 from src.observability import (
     EventProgress,
@@ -41,12 +48,12 @@ from src.observability import (
 )
 
 MAX_EVENT_BYTES = 8 * 1024 * 1024
+DEFAULT_WORKSPACE_ROOT = Path.home() / "agent-lens-workspaces"
 
 app = observed_app(
     "Agent Lens Executor", "agent-lens-executor", {("POST", "/run"): "executor.http"}, private=True,
 )
 execution_lock = asyncio.Lock()
-picker_lock = asyncio.Lock()
 workspace_selections: dict[UUID, Path] = {}
 
 
@@ -65,6 +72,8 @@ def checked_workspace(path: Path, run: ExecutorConfig) -> Path:
             raise ValueError("Workspace is not a directory.")
     except (OSError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=409, detail="Workspace directory is unavailable.") from error
+    if not resolved.is_relative_to(run.workspace_root):
+        raise HTTPException(status_code=409, detail="Workspace directory is outside the workspace root.")
     for private in (run.state_dir, run.state_dir.parent / "ipc"):
         if resolved.is_relative_to(private) or private.is_relative_to(resolved):
             raise HTTPException(status_code=409, detail="Workspace overlaps private executor files.")
@@ -89,46 +98,33 @@ def validate_workspace(request: WorkspaceCheck) -> Response:
     return Response(status_code=204)
 
 
-async def pick_directory() -> Path | None:
+@app.get("/folders")
+def browse_folders(path: str = "") -> FolderListing:
+    root = configured_run().workspace_root
     try:
-        process = await asyncio.create_subprocess_exec(
-            "/usr/bin/zenity", "--file-selection", "--directory", "--title=Select a folder for Agent Lens",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-    except OSError as error:
-        raise HTTPException(status_code=503, detail="Native folder picker is unavailable.") from error
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-    except (TimeoutError, asyncio.CancelledError):
-        with suppress(ProcessLookupError):
-            process.kill()
-        await process.wait()
-        raise
-    if process.returncode == 1 and not stdout and not stderr:
-        return None
-    if process.returncode or not stdout:
-        raise HTTPException(status_code=503, detail="Native folder picker did not return a directory.")
-    return Path(stdout.decode().removesuffix("\n"))
+        directory = resolve_folder(root, path)
+        folders, truncated = list_folders(directory)
+    except FolderUnavailable as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    relative = directory.relative_to(root)
+    return FolderListing(
+        root=str(root), path="" if relative == Path() else relative.as_posix(),
+        folders=folders, truncated=truncated,
+    )
 
 
-@app.post("/workspace-picker", response_model=WorkspaceSelection)
-async def select_workspace() -> WorkspaceSelection | Response:
+@app.post("/folders")
+def select_folder(folder: FolderRequest) -> WorkspaceSelection:
     run = configured_run()
-    if picker_lock.locked():
-        raise HTTPException(status_code=409, detail="A folder picker is already open.")
-    async with picker_lock:
-        try:
-            path = await pick_directory()
-        except TimeoutError as error:
-            raise HTTPException(status_code=408, detail="Folder selection timed out.") from error
-        if path is None:
-            return Response(status_code=204)
-        resolved = checked_workspace(path, run)
-        selection = uuid4()
-        if len(workspace_selections) >= 128:
-            del workspace_selections[next(iter(workspace_selections))]
-        workspace_selections[selection] = resolved
-        return WorkspaceSelection(id=selection, path=str(resolved))
+    try:
+        resolved = checked_workspace(resolve_folder(run.workspace_root, folder.path), run)
+    except FolderUnavailable as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    selection = uuid4()
+    if len(workspace_selections) >= 128:
+        del workspace_selections[next(iter(workspace_selections))]
+    workspace_selections[selection] = resolved
+    return WorkspaceSelection(id=selection, path=str(resolved))
 
 
 @app.get("/workspaces/{selection_id}")
@@ -248,7 +244,7 @@ async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
     config = configured_run()
     run = CatalogRun(
         binary=config.binary, state_dir=config.state_dir, model=config.model, api_key=config.api_key,
-        workspace=confirmed_workspace(Path(request.workspace), config),
+        workspace_root=config.workspace_root, workspace=confirmed_workspace(Path(request.workspace), config),
     )
     return ClosingStreamingResponse(
         stream_process(run, request),
@@ -261,18 +257,39 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Start the host executor on its private Unix socket.")
     parser.add_argument("--codex-bin", required=True, type=Path)
     parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--workspace-root", type=Path,
+        help=f"Only this folder and its subfolders can be chosen. Default: {DEFAULT_WORKSPACE_ROOT}",
+    )
     args = parser.parse_args()
     key = sys.stdin.readline().strip()
     if not key or not key.isascii() or any(char.isspace() for char in key):
         parser.error("Provide the Codex API key via standard input.")
     state_dir, socket = prepare_executor_dirs(Path(__file__).resolve().parents[2])
+    try:
+        workspace_root = prepare_workspace_root(args.workspace_root)
+    except OSError:
+        parser.error("The workspace root must be an existing folder.")
     app.state.catalog_run = ExecutorConfig(
         binary=args.codex_bin.resolve(strict=True),
         state_dir=state_dir,
         model=args.model,
         api_key=key,
+        workspace_root=workspace_root,
     )
+    print(f"Workspace root: {workspace_root}", flush=True)
     uvicorn.run(app, uds=str(socket), access_log=False)
+
+
+def prepare_workspace_root(requested: Path | None) -> Path:
+    """Resolve the chosen root, creating only the default one with a folder to try it in."""
+    if requested is None:
+        (DEFAULT_WORKSPACE_ROOT / "demo").mkdir(parents=True, exist_ok=True)
+        requested = DEFAULT_WORKSPACE_ROOT
+    root = requested.expanduser().resolve(strict=True)
+    if not root.is_dir():
+        raise NotADirectoryError(root)
+    return root
 
 
 def prepare_executor_dirs(project: Path) -> tuple[Path, Path]:

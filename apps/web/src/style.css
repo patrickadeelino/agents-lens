@@ -1079,3 +1079,14 @@ pre {
 .delegation-summary { margin: 0; padding: 0 var(--lane-inset) 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .delegation-branch > .event-list { margin-inline-start: clamp(5px, 1.3vw, 16px); padding-block-end: 6px; }
 .delegation-branch .delegation-branch > .event-list { margin-inline-start: 5px; }
+
+.folder-picker { box-sizing: border-box; inline-size: min(520px, calc(100vw - 28px)); max-block-size: min(640px, calc(100dvh - 28px)); padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.folder-picker[open] { display: flex; flex-direction: column; gap: 12px; }
+.folder-picker::backdrop { background: rgb(5 5 5 / 40%); }
+.folder-picker h2, .folder-picker p { margin: 0; }
+.folder-picker h2 { font-size: 1.05rem; }
+.folder-current { margin-block-start: 6px; overflow-wrap: anywhere; color: var(--ink-muted); font-family: var(--font-code); font-size: .8rem; }
+.folder-up { align-self: flex-start; min-block-size: 44px; }
+.folder-list { display: grid; gap: 4px; min-block-size: 0; margin: 0; padding: 2px; overflow-y: auto; list-style: none; }
+.folder-list button { inline-size: 100%; overflow-wrap: anywhere; text-align: start; }
+.folder-picker footer { display: flex; justify-content: flex-end; gap: 8px; }
