@@ -11,3 +11,5 @@ __pycache__/
 /.captures/
 /.local/codex-executor/
 /.env
+.vite/
+.ruff_cache/
