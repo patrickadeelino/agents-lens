@@ -174,6 +174,42 @@ if prompt in ("save marker: niobium", "recall the marker"):
         }}), flush=True)
     emit('{"type":"turn.completed"}', flush=True)
     raise SystemExit(0)
+if prompt == "delegation capture":
+    child = {"threadId": "child-1", "turnId": "child-turn"}
+    sibling = {"threadId": "child-2", "turnId": "sibling-turn"}
+    root = {"threadId": thread_id, "turnId": "current-turn"}
+
+    def edge(owner, child_id, item_id):
+        notify("item/completed", **owner, item={
+            "type": "subAgentActivity", "kind": "started", "id": item_id, "agentThreadId": child_id,
+        })
+
+    def command(owner, output):
+        notify("item/completed", **owner, item={
+            "type": "commandExecution", "id": "shared-id", "command": "cat catalog.py",
+            "aggregatedOutput": output, "exitCode": 0, "status": "completed",
+        })
+
+    notify("turn/started", **root, turn={"id": "current-turn"})
+    command(child, "child-output")
+    command(child, "child-output")
+    edge(root, "child-1", "spawn-child")
+    (state / "delegation-first").touch()
+    deadline = time.monotonic() + 10
+    while not (state / "delegation-resume").exists():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    edge(root, "child-2", "spawn-sibling")
+    edge(child, "nested-child", "spawn-nested")
+    command(sibling, "sibling-output")
+    command(child, "conflicting-output")
+    notify("item/completed", **child, item={"type": "agentMessage", "id": "reply", "text": "child-only"})
+    notify("turn/completed", **child, turn={"id": "child-turn", "status": "failed"})
+    notify("item/completed", threadId="unrelated", turnId="other",
+           item={"type": "agentMessage", "id": "private-item", "text": "unrelated-output"})
+    notify("item/completed", **root, item={"type": "agentMessage", "id": "reply", "text": "root-only"})
+    notify("turn/completed", **root, turn={"id": "current-turn", "status": "completed"})
+    raise SystemExit(0)
 if prompt == "report command outcome":
     time.sleep(1)
 emit(json.dumps({"type": "turn.started", "prompt": prompt, "cwd": str(Path.cwd())}), flush=True)
@@ -1076,3 +1112,40 @@ def test_replay_logs_disconnect_after_loading_a_valid_trace(
     assert {item.log_record.body for item in log_exporter.get_finished_logs()} == {
         "replay.load.completed", "replay.sse.disconnected",
     }
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_delegation_reconnect_preserves_attribution_and_parent_outcome(run_workspace: Path) -> None:
+    with running_server(app, Event()) as url, httpx.Client(base_url=url, timeout=6, trust_env=False) as api:
+        with api.stream("POST", "/runs", json={"prompt": "delegation capture"}) as response:
+            run_id = response.headers["X-Run-ID"]
+            frames = response.iter_lines()
+            first = [next_frame(frames)[1] for _ in range(4)]
+        run_url = f"/runs/{run_id}"
+        (run_workspace / "delegation-resume").touch()
+        stream = api.get(run_url + "/stream", params={"after": 4})
+        lines = stream.text.splitlines()
+        tail = [json.loads(line[6:]) for line in lines if line.startswith("data: ")]
+        ids = [int(line[4:]) for line in lines if line.startswith("id: ")]
+        assert tail.pop() == {"exit_code": 0}
+        assert ids == list(range(5, 5 + len(tail)))
+    with running_server(app, Event()) as url, httpx.Client(base_url=url, timeout=6, trust_env=False) as api:
+        history = api.get(run_url + "/events").json()
+        assert [row["record"] for row in history["events"]] == first + tail
+        assert history["status"] == "completed"
+        assert history["continuation"]["state"] == "available"
+
+    events = [TimedEvent.model_validate(row).event.model_dump() for row in first + tail]
+    assert [event["type"] for event in events[:4]] == [
+        "thread.started", "turn.started", "delegation.event", "delegation.edge",
+    ]
+    assert len(list((run_workspace / "captures").iterdir())) == 1
+    assert [(event["child_thread_id"], event["child_index"]) for event in events
+            if event["type"] == "delegation.edge"] == [("child-1", 1), ("child-2", 2), ("nested-child", 3)]
+    assert "unrelated-output" not in json.dumps(events)
+    assert [(e["thread_id"], e["observation"]["item"]["aggregated_output"]) for e in events
+            if e.get("observation", {}).get("item", {}).get("type") == "command_execution"] == [
+        ("child-1", "child-output"), ("child-2", "sibling-output"), ("child-1", "conflicting-output"),
+    ]
+    assert {e["thread_id"] for e in events if e["type"] == "delegation.incomplete"} == {"child-2", "nested-child"}
+    assert [e["item"]["text"] for e in events if e["type"] == "item.completed"] == ["root-only"]

@@ -3,13 +3,16 @@
 import asyncio
 import json
 import re
-from collections.abc import AsyncIterator
-from typing import Any
+from collections import deque
+from collections.abc import AsyncIterator, Iterator
 
+from src.infrastructure.app_server_delegation import (
+    DelegationCapture,
+    Json,
+    Notification,
+)
 from src.infrastructure.catalog_run import PROFILE, CatalogRun
 from src.infrastructure.executor_protocol import ExecutorRequest
-
-Json = dict[str, Any]
 
 
 class AppServerError(Exception):
@@ -160,6 +163,39 @@ class AppServerTurn:
         error = turn.get("error") or {}
         return {"type": "turn.failed", "error": {"message": error.get("message") or turn["status"]}}
 
+    def scoped_events(self, capture: DelegationCapture, note: Notification) -> Iterator[Json]:
+        if capture.is_terminal(note):
+            yield from capture.incomplete()
+        event = self.scoped_event(capture, note)
+        if event is not None and (not event["type"].startswith("delegation.") or capture.unique(event)):
+            yield event
+        for state in wait_observations(capture, note):
+            if capture.unique(state):
+                yield state
+
+    def scoped_event(self, capture: DelegationCapture, note: Notification) -> Json | None:
+        if note.item.get("type") == "subAgentActivity":
+            return delegation_activity(capture, note)
+        if capture.is_root(note):
+            return self.turn_event(note.method, note.params)
+        return child_observation(capture, note)
+
+    async def notifications(self, capture: DelegationCapture, pending: list[Json]) -> AsyncIterator[Notification]:
+        initial = deque(pending)
+        clock = asyncio.get_running_loop()
+        while self.exit_code is None:
+            try:
+                async with asyncio.timeout_at(capture.deadline):
+                    message = initial.popleft() if initial else await self.receive()
+            except TimeoutError:
+                for accepted in capture.flush():
+                    yield accepted
+                continue
+            note = Notification.from_message(message)
+            if note is not None:
+                for accepted in capture.offer(note, clock.time()):
+                    yield accepted
+
     async def events(self, run: CatalogRun, request: ExecutorRequest) -> AsyncIterator[Json]:
         thread_id = await self.open_thread(run, request)
         pending: list[Json] = []
@@ -167,14 +203,85 @@ class AppServerTurn:
             "threadId": thread_id, "input": [{"type": "text", "text": request.prompt, "text_elements": []}],
         }, 4)
         turn_id = (await self.reply(4, pending))["turn"]["id"]
+        capture = DelegationCapture(thread_id, turn_id)
         yield {"type": "thread.started", "thread_id": thread_id}
-        while self.exit_code is None:
-            message = pending.pop(0) if pending else await self.receive()
-            params = message.get("params", {})
-            if params.get("threadId") != thread_id:
-                continue
-            if (params.get("turnId") or params.get("turn", {}).get("id")) != turn_id:
-                continue
-            event = self.turn_event(message["method"], params)
-            if event is not None:
+        async for event in self.capture_events(capture, pending):
+            yield event
+
+    async def capture_events(self, capture: DelegationCapture, pending: list[Json]) -> AsyncIterator[Json]:
+        try:
+            async for note in self.notifications(capture, pending):
+                for event in self.scoped_events(capture, note):
+                    yield event
+        except Exception:
+            for event in self.interrupted_events(capture):
                 yield event
+            raise
+
+    def interrupted_events(self, capture: DelegationCapture) -> Iterator[Json]:
+        for note in capture.flush():
+            if not capture.is_terminal(note):
+                yield from self.scoped_events(capture, note)
+        yield from capture.incomplete()
+
+
+def delegation_activity(capture: DelegationCapture, note: Notification) -> Json | None:
+    item = note.item
+    child = item.get("agentThreadId")
+    if not isinstance(child, str) or capture.parents.get(child) != note.thread:
+        return None
+    if note.spawned_thread:
+        return {
+            "type": "delegation.edge", "parent_thread_id": note.thread, "parent_turn_id": note.turn,
+            "item_id": item["id"], "child_thread_id": child, "child_index": capture.ordinal(child),
+        }
+    if note.method != "item/completed" or item.get("kind") != "completed":
+        return None
+    capture.finished.add(child)
+    return {
+        "type": "delegation.event", "thread_id": child, "source_thread_id": note.thread,
+        "turn_id": note.turn, "item_id": item.get("id"), "observation": {
+            "type": "subagent.completed", "item": item,
+        },
+    }
+
+
+def child_turn_observation(capture: DelegationCapture, note: Notification) -> Json:
+    turn = note.params["turn"]
+    capture.finished.add(note.thread)
+    event: Json = {"type": "turn.completed", "status": turn["status"]}
+    if turn.get("error"):
+        event["error"] = turn["error"]
+    return event
+
+
+def child_observation(capture: DelegationCapture, note: Notification) -> Json | None:
+    event: Json | None = None
+    if note.method in {"item/started", "item/completed"}:
+        event = item_event(note.method, note.item)
+    elif note.method == "turn/started":
+        capture.finished.discard(note.thread)
+        event = {"type": "turn.started"}
+    elif note.method == "turn/completed":
+        event = child_turn_observation(capture, note)
+    elif note.method == "error":
+        event = {"type": "error", "error": note.params.get("error"), "will_retry": note.params.get("willRetry")}
+    if event is None:
+        return None
+    return {
+        "type": "delegation.event", "thread_id": note.thread, "turn_id": note.turn,
+        "item_id": note.item.get("id"), "observation": event,
+    }
+
+
+def wait_observations(capture: DelegationCapture, note: Notification) -> Iterator[Json]:
+    item = note.item
+    if note.method != "item/completed" or item.get("type") != "collabAgentToolCall" or item.get("tool") != "wait":
+        return
+    for child, state in (item.get("agentsStates") or {}).items():
+        if capture.parents.get(child) == note.thread and isinstance(state, dict):
+            yield {
+                "type": "delegation.event", "thread_id": child, "source_thread_id": note.thread,
+                "turn_id": note.turn, "item_id": item.get("id"),
+                "observation": {"type": "subagent.wait", "state": state},
+            }
