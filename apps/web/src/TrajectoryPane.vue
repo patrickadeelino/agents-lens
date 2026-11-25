@@ -288,7 +288,10 @@ onUnmounted(() => {
     <div ref="viewport" class="trajectory-scroll" @scroll.passive="onScroll">
       <div class="trajectory-context">
         <p v-if="replay" class="quiet-text">Replay de eventos gravados e sanitizados. Sem chamada de modelo.</p>
-        <p v-if="prompt" class="trajectory-prompt">{{ prompt }}</p>
+        <details v-if="prompt" class="trajectory-prompt-disclosure">
+          <summary><span>Mostrar prompt</span><span>Ocultar prompt</span></summary>
+          <p class="trajectory-prompt">{{ prompt }}</p>
+        </details>
         <div v-if="connection === 'Reconectando…' || connection === 'Interrompida'" class="connection-notice">
           <p role="status">
             {{ connection === 'Reconectando…' ? 'Conexão perdida. Tentando reconectar.' : 'Fluxo interrompido. Os eventos exibidos permanecem disponíveis.' }}

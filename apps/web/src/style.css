@@ -789,7 +789,10 @@ pre {
   padding: 12px var(--column-space) 18px;
 }
 .trajectory-context { display: grid; gap: 10px; }
-.trajectory-prompt { max-inline-size: 72ch; }
+.trajectory-prompt-disclosure > summary { cursor: pointer; color: var(--accent-link); }
+.trajectory-prompt-disclosure:not([open]) > summary > :last-child,
+.trajectory-prompt-disclosure[open] > summary > :first-child { display: none; }
+.trajectory-prompt { max-inline-size: 72ch; margin-block: 8px 0; }
 .trajectory-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 102px), 1fr));
