@@ -4,7 +4,7 @@ Agent Lens writes structured operational logs to stderr for live runs. The optio
 
 ## Start the stack
 
-Use the repository's ignored `.env` for local settings. On a fresh checkout, copy `.env.example` to `.env` and fill in the local OpenObserve password. For an existing `.env`, add the observability settings from the template and keep the existing Codex key assignment. OpenObserve requires at least eight characters including upper and lower case, a number, and a special character.
+Use the repository's ignored `.env` for local settings. On a fresh checkout, copy `.env.example` to `.env` and fill in the local OpenObserve password. For an existing `.env`, add the observability settings from the template. Keep the Codex API key out of this file; the host executor reads it from standard input, as shown in the [root README](../README.md). OpenObserve requires at least eight characters including upper and lower case, a number, and a special character.
 
 ```sh
 docker compose up -d --build
