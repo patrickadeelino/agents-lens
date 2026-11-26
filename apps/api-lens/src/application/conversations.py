@@ -11,8 +11,8 @@ from src.application.conversation_ports import (
     ConversationRun,
 )
 from src.application.run_continuation import ContinuationInfo, describe_continuation
-from src.application.run_history import GetRunHistory
 from src.domain.lineage import ancestors, descendants
+from src.domain.turn_outcome import turn_status
 from src.domain.turn_summary import TurnSummary
 from src.observability import event_log
 
@@ -84,7 +84,7 @@ class Conversations[Run: ConversationRun]:
             return "active"
         if result is None:
             return "unconfirmed"
-        return GetRunHistory._run_status(last_turn, result.exit_code, result.capture_failed)
+        return turn_status(last_turn, result.exit_code, capture_failed=result.capture_failed)
 
     def _project(self, root: Run, *, details: bool) -> ThreadDetail | None:
         session = root.read_session()

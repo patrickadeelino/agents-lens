@@ -1,7 +1,6 @@
 """Capture a live run and publish each record after it is flushed."""
 
 import asyncio
-import re
 from asyncio import Event, Future, Queue
 from collections.abc import AsyncGenerator, Callable, Iterable
 from contextlib import AbstractContextManager, aclosing, asynccontextmanager
@@ -13,6 +12,7 @@ from typing import Literal, Protocol, TextIO
 from uuid import UUID
 
 from src.domain.trace_events import TimedEvent
+from src.domain.turn_outcome import agent_reply, turn_boundary
 from src.domain.turn_summary import TurnEvidence, TurnSummary
 from src.observability import (
     EventProgress,
@@ -92,14 +92,8 @@ class CaptureRun:
         self._conflicting_thread_id: UUID | None = None
 
     def _observe_summary(self, record: TimedEvent) -> None:
-        event = record.event
-        if event.type in {"turn.started", "turn.completed", "turn.failed"}:
-            self._last_turn = event.type
-        item = getattr(event, "item", None)
-        if event.type == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
-            text = item.get("text")
-            if isinstance(text, str) and text.strip() and not re.fullmatch(r"\s*\[redacted:[^\]]+\]\s*", text, re.IGNORECASE):
-                self._assistant_markdown = text
+        self._last_turn = turn_boundary(record.event) or self._last_turn
+        self._assistant_markdown = agent_reply(record.event) or self._assistant_markdown
 
     def _record(self, publish: FlushedRecordCallback, progress: EventProgress) -> int | None:
         threads: set[UUID | None] = set()

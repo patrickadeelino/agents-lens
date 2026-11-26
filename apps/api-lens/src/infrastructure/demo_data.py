@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from src.application.run_continuation import RunSession
 from src.domain.trace_events import TimedEvent, TraceEvent
+from src.domain.turn_outcome import agent_reply
 from src.domain.turn_summary import TurnEvidence
 from src.infrastructure.capture_files import CaptureFiles
 
@@ -38,9 +39,7 @@ def save_turn(capture: CaptureFiles, conversation: Conversation, turn: Turn, fin
             record = TimedEvent(elapsed_ns=offset_ms * 1_000_000, event=event)
             evidence.observe(record)
             trace.write(json.dumps(record.model_dump(), ensure_ascii=False) + "\n")
-            item = (event.model_extra or {}).get("item", {})
-            if event.type == "item.completed" and item.get("type") == "agent_message":
-                reply = item["text"]
+            reply = agent_reply(event) or reply
     duration_ns = turn.events[-1][0] * 1_000_000
     capture.write_result(
         0, thread_id=conversation.thread_id, assistant_markdown=reply,

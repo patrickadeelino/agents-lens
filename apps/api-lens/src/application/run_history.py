@@ -9,6 +9,7 @@ from typing import Literal, Protocol, Self
 from src.domain.command_execution import CommandExecutions, CommandExecutionState
 from src.domain.trace_events import TimedEvent
 from src.domain.trace_reader import read_timed_trace
+from src.domain.turn_outcome import TurnStatus, turn_boundary, turn_status
 
 from .run_continuation import (
     ContinuationInfo,
@@ -17,7 +18,6 @@ from .run_continuation import (
     describe_continuation,
 )
 
-type RunStatus = Literal["completed", "failed", "unconfirmed"]
 type RunReadErrorKind = Literal["run_not_found", "trace_not_found", "capture_starting", "capture_unavailable"]
 
 
@@ -57,7 +57,7 @@ class RunHistoryPage:
     commands: dict[str, CommandSummary]
     latest_event_id: int | None
     next_before: int | None
-    status: RunStatus
+    status: TurnStatus
     exit_code: int | None
     last_turn: str | None
     continuation: ContinuationInfo
@@ -109,8 +109,7 @@ class GetRunHistory:
                 raise ValueError("History trace has invalid arrival offsets.")
             previous_offset_ns = record.elapsed_ns
             latest_event_id = event_id
-            if record.event.type in {"turn.started", "turn.completed", "turn.failed"}:
-                last_turn = record.event.type
+            last_turn = turn_boundary(record.event) or last_turn
             command = commands.observe(record)
             if before is None or event_id < before:
                 page.append((HistoryEvent(event_id, record), command.item_id if command else None))
@@ -120,14 +119,5 @@ class GetRunHistory:
         next_before = events[0].event_id if events and events[0].event_id > 1 else None
         return RunHistoryPage(
             run_id, events, summaries, latest_event_id, next_before,
-            cls._run_status(last_turn, exit_code, capture_failed), exit_code, last_turn, continuation,
+            turn_status(last_turn, exit_code, capture_failed=capture_failed), exit_code, last_turn, continuation,
         )
-
-
-    @staticmethod
-    def _run_status(last_turn: str | None, exit_code: int | None, capture_failed: bool = False) -> RunStatus:
-        if capture_failed or last_turn == "turn.failed" or (exit_code is not None and exit_code != 0):
-            return "failed"
-        if last_turn == "turn.completed" and exit_code == 0:
-            return "completed"
-        return "unconfirmed"
