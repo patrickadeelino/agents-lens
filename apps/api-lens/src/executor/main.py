@@ -6,7 +6,7 @@ import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import uvicorn
 from fastapi import HTTPException
@@ -20,6 +20,7 @@ from src.executor.workspace.workspace_folders import (
     list_folders,
     resolve_folder,
 )
+from src.executor.workspace.workspace_selections import WorkspaceSelections
 from src.shared.executor_protocol import (
     ExecutorRequest,
     FolderListing,
@@ -37,7 +38,7 @@ app = observed_app(
     "Agent Lens Executor", "agent-lens-executor", {("POST", "/run"): "executor.http"}, private=True,
 )
 execution_lock = asyncio.Lock()
-workspace_selections: dict[UUID, Path] = {}
+workspace_selections = WorkspaceSelections()
 
 
 def configured_run() -> ExecutorConfig:
@@ -103,16 +104,12 @@ def select_folder(folder: FolderRequest) -> WorkspaceSelection:
         resolved = checked_workspace(resolve_folder(run.workspace_root, folder.path), run)
     except FolderUnavailable as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    selection = uuid4()
-    if len(workspace_selections) >= 128:
-        del workspace_selections[next(iter(workspace_selections))]
-    workspace_selections[selection] = resolved
-    return WorkspaceSelection(id=selection, path=str(resolved))
+    return WorkspaceSelection(id=workspace_selections.remember(resolved), path=str(resolved))
 
 
 @app.get("/workspaces/{selection_id}")
 def get_workspace(selection_id: UUID) -> WorkspaceSelection:
-    path = workspace_selections.get(selection_id)
+    path = workspace_selections.find(selection_id)
     if path is None:
         raise HTTPException(status_code=404, detail="Workspace selection expired.")
     return WorkspaceSelection(id=selection_id, path=str(confirmed_workspace(path, configured_run())))

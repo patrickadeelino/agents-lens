@@ -34,6 +34,7 @@ from src.executor import main as executor
 from src.executor.codex.catalog_run import CatalogRun
 from src.executor.main import app as executor_app
 from src.executor.process import codex_process
+from src.executor.workspace.workspace_selections import WorkspaceSelections
 from src.shared.trace_events import TimedEvent
 
 LITERAL_PROMPT = '  --help\nLeia o README "juniper" ☕.\n'
@@ -384,7 +385,9 @@ def executor_socket(
 ) -> Iterator[Path]:
     unix_path = run_workspace / "executor.sock"
     monkeypatch.setattr(executor_app.state, "catalog_run", run_config, raising=False)
-    monkeypatch.setattr(executor, "workspace_selections", {WORKSPACE_ID: run_config.workspace})
+    selections = WorkspaceSelections(new_id=lambda: WORKSPACE_ID)
+    selections.remember(run_config.workspace)
+    monkeypatch.setattr(executor, "workspace_selections", selections)
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(unix_path))
     with running_server(executor_app, Event(), unix_path=unix_path):
         yield unix_path
@@ -550,7 +553,7 @@ def test_a_chosen_folder_runs_in_the_original_directory(
 ) -> None:
     directory = run_workspace / "projects" / "original project"
     directory.mkdir(parents=True)
-    monkeypatch.setattr(executor, "workspace_selections", {})
+    monkeypatch.setattr(executor, "workspace_selections", WorkspaceSelections())
     backend, _ = live_http
     listing = backend.get("/folders", params={"path": "projects"})
     assert listing.json() == {
@@ -575,7 +578,8 @@ def test_a_chosen_folder_runs_in_the_original_directory(
     assert backend.get(f"/threads/by-run/{first_id}").json()["workspace"] == str(directory)
     assert backend.get("/threads").json()["threads"][0]["workspace"] == str(directory)
 
-    executor.workspace_selections.clear()
+    # A restarted executor forgets every selection.
+    monkeypatch.setattr(executor, "workspace_selections", WorkspaceSelections())
     expired = backend.post("/runs", json={"prompt": "catalog first", "workspace_id": selection.json()["id"]})
     assert expired.status_code == 409
     second = backend.post(f"/runs/{first_id}/continue", json={"prompt": "catalog second"})
