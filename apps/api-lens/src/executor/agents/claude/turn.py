@@ -31,8 +31,8 @@ class ClaudeTurn:
             returncode = await self.process.wait()
         ending = translation.ending()
         self.exit_code = confirmed_exit(ending, returncode)
-        if ending is not None:
-            yield ending
+        for event in closing_events(translation, ending):
+            yield event
 
     async def send_prompt(self, prompt: str) -> None:
         assert self.process.stdin is not None
@@ -56,6 +56,11 @@ def decoded(line: bytes) -> Json:
     if not isinstance(message, dict):
         raise AgentError
     return message
+
+
+def closing_events(translation: ClaudeTranslation, ending: Json | None) -> list[Json]:
+    unfinished = translation.incomplete()
+    return unfinished if ending is None else [*unfinished, ending]
 
 
 def confirmed_exit(ending: Json | None, returncode: int) -> int | None:

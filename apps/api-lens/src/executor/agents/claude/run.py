@@ -8,7 +8,7 @@ from pathlib import Path
 from src.executor.agents.base import Json
 from src.shared.executor_protocol import ExecutorRequest
 
-TOOLS = "Bash,Read,Edit,Write,Glob,Grep"
+TOOLS = "Bash,Read,Edit,Write,Glob,Grep,Agent"
 # Edit rules cover every tool that changes files.
 ALLOWED = ("Bash", "Edit(./**)")
 

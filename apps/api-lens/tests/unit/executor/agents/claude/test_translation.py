@@ -22,7 +22,8 @@ def translated(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     translation = ClaudeTranslation()
     events = [event for message in messages for event in translation.observe(message)]
     ending = translation.ending()
-    return events if ending is None else [*events, ending]
+    closing = translation.incomplete()
+    return [*events, *closing] if ending is None else [*events, *closing, ending]
 
 
 def completed_items(events: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
@@ -117,7 +118,7 @@ def test_two_results_make_one_ending_with_the_usage_of_both() -> None:
     }
 
 
-def test_the_subagent_s_own_activity_is_left_out_of_the_main_flow() -> None:
+def test_the_subagent_s_own_activity_is_kept_out_of_the_main_flow() -> None:
     calls = completed_items(translated(recorded("background_subagent")), "tool_call")
     assert [call["tool"] for call in calls] == ["Agent"]
 

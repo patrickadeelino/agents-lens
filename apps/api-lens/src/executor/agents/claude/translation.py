@@ -1,9 +1,16 @@
 """Translate the messages of one Claude Code run into capture events."""
 
+from collections.abc import Iterator
 from uuid import UUID
 
 from src.executor.agents.base import AgentError, Json
 from src.executor.agents.claude.items import completed_item, started_item
+from src.executor.agents.claude.subagents import (
+    Subagents,
+    answered_status,
+    notified_status,
+    observation,
+)
 
 _TEXT_BLOCKS = {"text": ("agent_message", "text"), "thinking": ("reasoning", "thinking")}
 
@@ -19,6 +26,7 @@ class ClaudeTranslation:
         self._texts = 0
         self._result: Json | None = None
         self._usage: dict[str, int] = {}
+        self._subagents = Subagents()
 
     def observe(self, message: Json) -> list[Json]:
         """Return the events this message adds. Unknown messages add none."""
@@ -28,10 +36,9 @@ class ClaudeTranslation:
         if kind == "result":
             self._keep_result(message)
             return []
-        # Messages with a parent belong to a subagent, which the main flow does not show yet.
-        if kind not in {"assistant", "user"} or message.get("parent_tool_use_id"):
+        if kind not in {"assistant", "user"}:
             return []
-        return self._blocks(message)
+        return self._message(message)
 
     def ending(self) -> Json | None:
         """The turn's outcome, decided by the latest result: a background subagent adds a second one."""
@@ -43,32 +50,59 @@ class ClaudeTranslation:
         reason = result.get("result") or result.get("terminal_reason") or "failed"
         return {"type": "turn.failed", "error": {"message": str(reason)}}
 
+    def incomplete(self) -> list[Json]:
+        """Mark the subagents whose end was never observed."""
+        return self._subagents.incomplete()
+
     def _system(self, message: Json) -> list[Json]:
-        if message.get("subtype") == "permission_denied":
-            self._denied.add(str(message.get("tool_use_id")))
-        if message.get("subtype") != "init" or self._started:
+        subtype, call = message.get("subtype"), str(message.get("tool_use_id"))
+        if subtype == "permission_denied":
+            self._denied.add(call)
+        if subtype == "task_started":
+            return self._subagents.start(call)
+        if subtype == "task_notification":
+            return self._subagents.end(call, notified_status(message.get("status")))
+        if subtype != "init" or self._started:
             return []
         session = str(UUID(message["session_id"]))
         if self._expected_session not in {None, session}:
             raise AgentError
         self._started = True
+        self._subagents.root = session
         return [{"type": "thread.started", "thread_id": session}, {"type": "turn.started"}]
 
-    def _blocks(self, message: Json) -> list[Json]:
+    def _message(self, message: Json) -> list[Json]:
+        parent = message.get("parent_tool_use_id")
+        if parent and not self._subagents.known(parent):
+            return []
         content = message["message"].get("content")
         if not isinstance(content, list):
             return []
-        events = (self._block(block, message) for block in content)
-        return [event for event in events if event is not None]
+        return [event for block in content for event in self._block_events(block, message, parent)]
 
-    def _block(self, block: Json, message: Json) -> Json | None:
+    def _block_events(self, block: Json, message: Json, parent: str | None) -> Iterator[Json]:
+        event = self._block(block, message, parent)
+        if event is not None and parent:
+            yield from self._subagents.start(parent)
+            yield observation(parent, event)
+        elif event is not None:
+            yield event
+        if block.get("type") != "tool_result":
+            return
+        status = answered_status(block, message.get("tool_use_result"))
+        if status:
+            yield from self._subagents.end(str(block.get("tool_use_id")), status)
+
+    def _block(self, block: Json, message: Json, parent: str | None) -> Json | None:
         kind = block.get("type")
         if kind == "tool_use":
+            self._subagents.request(block, parent)
             item = self._open[block["id"]] = started_item(block)
             return {"type": "item.started", "item": item}
         if kind == "tool_result":
             return self._tool_result(block, message)
-        if kind in _TEXT_BLOCKS:
+        # Text in a user message is what was sent to the agent, not something it said.
+        if kind in _TEXT_BLOCKS and message.get("type") == "assistant":
             return self._text(block, message["message"].get("id"))
         return None
 
