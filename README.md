@@ -114,6 +114,7 @@ The main choices, with their alternatives and costs:
 - [Keep one capture per turn](docs/decisions/0002-one-capture-per-turn.md)
 - [Drive Codex through App Server](docs/decisions/0003-codex-through-app-server.md)
 - [Run the executor as an isolated service](docs/decisions/0004-isolate-the-executor.md)
+- [Add Claude Code behind the same capture format](docs/decisions/0005-claude-code-as-a-second-agent.md)
 
 ## Security and limitations
 
