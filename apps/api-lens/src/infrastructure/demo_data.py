@@ -43,7 +43,7 @@ def save_turn(capture: CaptureFiles, conversation: Conversation, turn: Turn, fin
                 reply = item["text"]
     duration_ns = turn.events[-1][0] * 1_000_000
     capture.write_result(
-        0, thread_id=conversation.thread_id, persistence_confirmed=True, assistant_markdown=reply,
+        0, thread_id=conversation.thread_id, assistant_markdown=reply,
         last_turn=turn.events[-1][1].type, finished_at=finished_at,
         summary=evidence.finish(interrupted=False, total_duration_ns=duration_ns),
     )
@@ -55,7 +55,7 @@ def save_conversation(root: Path, conversation: Conversation, now: datetime) -> 
         submitted_at = now - timedelta(minutes=conversation.age_minutes - index * 3)
         capture = CaptureFiles.create(root, prefix="codex-prompt-")
         capture.write_session(RunSession(
-            persistent=True, previous_run_id=previous.directory.name if previous else None,
+            previous_run_id=previous.directory.name if previous else None,
             prompt=turn.prompt, submitted_at=submitted_at, workspace=conversation.folder,
         ))
         if previous:

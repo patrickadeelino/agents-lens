@@ -5,7 +5,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-SESSION_PERSISTENCE_HEADER = "X-Agent-Lens-Session-Persistence"
 MAX_FOLDER_PATH = 4096
 
 

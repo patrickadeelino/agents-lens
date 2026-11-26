@@ -29,13 +29,8 @@ from .capture import EventCapture
 type StdoutConsumer = Callable[[Iterable[str]], None]
 
 
-@dataclass(frozen=True)
-class ExecutionResult:
-    exit_code: int | None
-    persistence_confirmed: bool
-
-
-type ExecutePrompt = Callable[[str, StdoutConsumer], ExecutionResult]
+# Deliver a prompt, pass the stdout lines to the consumer and return the exit code.
+type ExecutePrompt = Callable[[str, StdoutConsumer], int | None]
 
 
 class CaptureOutput(Protocol):
@@ -44,7 +39,7 @@ class CaptureOutput(Protocol):
     def track_activity(self) -> AbstractContextManager[None]: ...
 
     def write_result(
-        self, exit_code: int | None, *, thread_id: UUID | None = None, persistence_confirmed: bool = False,
+        self, exit_code: int | None, *, thread_id: UUID | None = None,
         assistant_markdown: str | None = None, last_turn: str | None = None, finished_at: datetime | None = None,
         conflicting_thread_id: UUID | None = None,
         capture_failed: bool = False, summary: TurnSummary | None = None,
@@ -128,26 +123,22 @@ class CaptureRun:
             finally:
                 commands.finish()
 
-        result = self._execute(self._prompt, record_stdout)
+        exit_code = self._execute(self._prompt, record_stdout)
         thread_id = next(iter(threads)) if len(threads) == 1 else None
         if self._expected_thread is not None and thread_id != self._expected_thread:
-            if thread_id is not None and result.persistence_confirmed:
-                self._conflicting_thread_id = thread_id
+            self._conflicting_thread_id = thread_id
             thread_id = None
-        self._write_result(
-            result.exit_code, thread_id=thread_id,
-            persistence_confirmed=thread_id is not None and result.persistence_confirmed,
-        )
-        return result.exit_code
+        self._write_result(exit_code, thread_id=thread_id)
+        return exit_code
 
     def _write_result(
-        self, exit_code: int | None, *, thread_id: UUID | None = None, persistence_confirmed: bool = False,
+        self, exit_code: int | None, *, thread_id: UUID | None = None,
         capture_failed: bool = False,
     ) -> None:
         with operation_span("capture.write_result") as span:
             try:
                 self._output.write_result(
-                    exit_code, thread_id=thread_id, persistence_confirmed=persistence_confirmed,
+                    exit_code, thread_id=thread_id,
                     assistant_markdown=self._assistant_markdown, last_turn=self._last_turn, finished_at=datetime.now(UTC),
                     conflicting_thread_id=self._conflicting_thread_id,
                     capture_failed=capture_failed,

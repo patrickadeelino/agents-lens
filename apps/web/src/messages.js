@@ -160,7 +160,6 @@ export const t = Object.freeze({
     needsExecutor: "Resuming requires the executor.",
     checkingExecutor: "Checking the executor…",
     reasons: {
-      ephemeral: "This run did not save a Codex session.",
       active: "Wait for the run to finish before continuing.",
       superseded: "This conversation has a more recent run.",
     },
@@ -175,7 +174,6 @@ export const t = Object.freeze({
     openHistory: "Open history",
     loadingConversation: "Loading conversation…",
     turnList: "Conversation turns",
-    savedRun: "Saved run",
     openFailed: "Could not open this conversation.",
     sendFailed: (status) => `Could not send the request (HTTP ${status}). Your draft was kept.`,
     sendUnconfirmed: "Sending was not confirmed. Check the latest conversation before sending again.",
@@ -189,7 +187,6 @@ export const t = Object.freeze({
     loading: "Loading conversations…",
     loadFailed: "Could not load conversations.",
     empty: "No conversations yet.",
-    earlier: "Earlier conversations",
     newIn: (path) => `New conversation in ${path}`,
     turnProgress: (total) => `${count(total, "turn")} · turn ${total} in progress`,
   },

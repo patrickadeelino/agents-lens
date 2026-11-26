@@ -28,7 +28,6 @@ class SavedResult(BaseModel):
     model_config = ConfigDict(strict=True, hide_input_in_errors=True)
     exit_code: int | None
     thread_id: UUID | None = None
-    persistence_confirmed: bool = False
     assistant_markdown: str | None = None
     last_turn: str | None = None
     finished_at: datetime | None = None
@@ -88,24 +87,15 @@ class CaptureFiles:
         (self.directory / TRACE_NAME).touch(exist_ok=True)
 
     def write_result(
-        self, exit_code: int | None, *, thread_id: UUID | None = None, persistence_confirmed: bool = False,
+        self, exit_code: int | None, *, thread_id: UUID | None = None,
         assistant_markdown: str | None = None, last_turn: str | None = None, finished_at: datetime | None = None,
         conflicting_thread_id: UUID | None = None,
         capture_failed: bool = False, summary: TurnSummary | None = None,
     ) -> None:
-        result = SavedResult(exit_code=exit_code, thread_id=thread_id, persistence_confirmed=persistence_confirmed,
+        result = SavedResult(exit_code=exit_code, thread_id=thread_id,
                              assistant_markdown=assistant_markdown, last_turn=last_turn, finished_at=finished_at,
                              conflicting_thread_id=conflicting_thread_id, capture_failed=capture_failed, summary=summary)
-        fields = set()
-        if thread_id is None:
-            fields.add("thread_id")
-        if not persistence_confirmed:
-            fields.add("persistence_confirmed")
-        if not capture_failed:
-            fields.add("capture_failed")
-        fields.update(name for name in ("assistant_markdown", "last_turn", "finished_at", "conflicting_thread_id", "summary")
-                      if getattr(result, name) is None)
-        self._publish_once(RESULT_NAME, result.model_dump_json(exclude=fields) + "\n")
+        self._publish_once(RESULT_NAME, result.model_dump_json() + "\n")
 
     def write_session(self, session: RunSession) -> None:
         self._publish_once(SESSION_NAME, session.model_dump_json())
@@ -162,7 +152,7 @@ class CaptureFiles:
         while current.directory not in visited:
             visited.add(current.directory)
             result = current.read_result()
-            if result is not None and result.persistence_confirmed and result.thread_id is not None:
+            if result is not None and result.thread_id is not None:
                 return result.thread_id
             session = current.read_session()
             if session is None or session.previous_run_id is None:

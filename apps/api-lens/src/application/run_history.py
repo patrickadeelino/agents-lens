@@ -84,7 +84,7 @@ class GetRunHistory:
                 return self._build_page(
                     run_id, lines, limit=limit, before=before, exit_code=result.exit_code if result else None,
                     continuation=describe_continuation(run_id, capture, result),
-                    capture_failed=getattr(result, "capture_failed", False),
+                    capture_failed=result.capture_failed if result else False,
                 )
         except FileNotFoundError as error:
             kind: RunReadErrorKind = "capture_starting" if capture.is_active() else "trace_not_found"

@@ -24,7 +24,6 @@ from src.infrastructure.app_server import (
 )
 from src.infrastructure.catalog_run import CatalogRun, ExecutorConfig
 from src.infrastructure.executor_protocol import (
-    SESSION_PERSISTENCE_HEADER,
     ExecutorRequest,
     FolderListing,
     FolderRequest,
@@ -248,7 +247,6 @@ async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
     return ClosingStreamingResponse(
         stream_process(run, request),
         media_type="application/x-ndjson",
-        headers={SESSION_PERSISTENCE_HEADER: "enabled"},
     )
 
 

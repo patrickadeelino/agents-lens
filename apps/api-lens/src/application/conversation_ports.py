@@ -13,7 +13,6 @@ class ConversationResult(RecordedResult, Protocol):
     assistant_markdown: str | None
     last_turn: str | None
     finished_at: datetime | None
-    capture_failed: bool
     summary: TurnSummary | None
 
 

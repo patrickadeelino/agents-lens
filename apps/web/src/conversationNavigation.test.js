@@ -21,11 +21,10 @@ test("groups use full workspace paths and preserve activity order", () => {
     { workspace: "/labs/api", root_run_id: "one" },
     { workspace: "/other/api", root_run_id: "two" },
     { workspace: "/labs/api", root_run_id: "three" },
-    { root_run_id: "legacy" },
   ];
   const groups = groupConversations(threads);
   assert.deepEqual(groups.map(({ path, name }) => [path, name]), [
-    ["/labs/api", "api"], ["/other/api", "api"], [null, "Earlier conversations"],
+    ["/labs/api", "api"], ["/other/api", "api"],
   ]);
   assert.deepEqual(groups[0].threads.map((thread) => thread.root_run_id), ["one", "three"]);
   assert.equal(groups[0].runId, "one");

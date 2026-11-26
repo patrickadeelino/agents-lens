@@ -65,9 +65,9 @@ watch(() => props.drawer, async (open) => {
         <button type="button" class="link-button" @click="$emit('retry')">{{ t.common.tryAgain }}</button>
       </div>
       <p v-else-if="!threads.length && !unavailable" class="quiet-text">{{ t.sidebar.empty }}</p>
-      <section v-for="group in groups" :key="group.path ?? ''" class="workspace-group">
+      <section v-for="group in groups" :key="group.path" class="workspace-group">
         <details open>
-          <summary :title="group.path ?? undefined">
+          <summary :title="group.path">
             <span>{{ group.name }}</span>
           </summary>
           <ul>
@@ -84,7 +84,7 @@ watch(() => props.drawer, async (open) => {
             </li>
           </ul>
         </details>
-        <button v-if="group.path" type="button" class="icon-button workspace-new"
+        <button type="button" class="icon-button workspace-new"
           :title="t.sidebar.newIn(group.path)" :aria-label="t.sidebar.newIn(group.path)"
           @click="$emit('new', group)">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>

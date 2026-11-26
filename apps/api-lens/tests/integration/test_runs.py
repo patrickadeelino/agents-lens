@@ -30,7 +30,6 @@ from executor import app as executor_app
 from src.api import dependencies
 from src.application import capture_run
 from src.application.capture_run import FlushedRecord
-from src.application.run_continuation import RunSession
 from src.domain.trace_events import TimedEvent
 from src.infrastructure import executor_client
 from src.infrastructure.capture_files import CaptureFiles
@@ -638,15 +637,10 @@ def test_unavailable_workspace_does_not_reserve_a_continuation(
 
 
 @pytest.mark.usefixtures("executor_socket")
-def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
+def test_continuation_reopens_a_failed_attempt_without_events(
     live_http: tuple[httpx.Client, Event], run_workspace: Path,
 ) -> None:
     backend, _ = live_http
-    legacy = CaptureFiles.create(run_workspace / "captures", prefix="codex-prompt-")
-    legacy.ensure_trace()
-    legacy.write_result(0)
-    assert backend.get(f"/runs/{legacy.directory.name}/events").json()["continuation"]["state"] == "ephemeral"
-    assert backend.post(f"/runs/{legacy.directory.name}/continue", json={"prompt": "hello"}).status_code == 409
     assert backend.post("/runs/missing/continue", json={"prompt": "hello"}).status_code == 404
 
     first = backend.post("/runs", json=prompt_body("save marker: niobium"))
@@ -743,24 +737,6 @@ def test_a_continuation_that_times_out_can_be_retried(
         sleep(0.05)
     assert retried.status_code == 200
     assert "niobium" in retried.text
-
-
-def test_a_thread_id_from_an_older_executor_does_not_make_a_saved_run_resumable(
-    live_http: tuple[httpx.Client, Event], run_workspace: Path,
-) -> None:
-    backend, _ = live_http
-    capture = CaptureFiles.create(run_workspace / "captures", prefix="codex-prompt-")
-    thread_id = UUID("c47f8d99-9af1-4219-bc65-a55a27096cb8")
-    capture.write_session(RunSession(persistent=True))
-    with capture.open_trace() as trace:
-        trace.write('{"elapsed_ns":0,"event":{"type":"turn.completed"}}\n')
-    capture.write_result(0, thread_id=thread_id)
-
-    url = f"/runs/{capture.directory.name}"
-    history = backend.get(url + "/events").json()
-    assert history["status"] == "completed"
-    assert history["continuation"]["state"] == "unavailable"
-    assert backend.post(url + "/continue", json={"prompt": "try again"}).status_code == 409
 
 
 @pytest.mark.parametrize("body", [{}, {"prompt": 42}, {"prompt": "  \n "}, {"prompt": "read", "workspace": "/"}])
@@ -1196,7 +1172,7 @@ def test_run_traces_result_write_failure_without_raw_exception(
     telemetry_exports: tuple[InMemorySpanExporter, InMemoryLogRecordExporter],
 ) -> None:
     def fail_write(
-        self: CaptureFiles, exit_code: int | None, *, thread_id: UUID | None = None, persistence_confirmed: bool = False,
+        self: CaptureFiles, exit_code: int | None, *, thread_id: UUID | None = None,
         **kwargs: object,
     ) -> None:
         raise OSError("private-result-path")

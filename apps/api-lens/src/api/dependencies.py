@@ -73,7 +73,7 @@ def saved_workspace(run_id: str) -> str:
         raise HTTPException(status_code=404, detail="Conversation was not found.") from error
     except (OSError, ValueError) as error:
         raise HTTPException(status_code=503, detail="History is unavailable.") from error
-    if session is None or not session.workspace:
+    if session is None:
         raise HTTPException(status_code=409, detail="Select the folder to start a new conversation.")
     return session.workspace
 
@@ -91,10 +91,7 @@ def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> Promp
     reject_while_running()
     origin, thread_id = resumable_capture(run_id)
     socket = executor_socket()
-    session = origin.read_session()
-    if session is None or not session.workspace:
-        raise HTTPException(status_code=409, detail="This conversation has no recorded folder.")
-    workspace = session.workspace
+    workspace = saved_workspace(run_id)
     check_resume_workspace(socket, workspace)
     output = create_capture(request.prompt, previous_run_id=run_id, workspace=workspace)
     try:
@@ -155,7 +152,7 @@ def create_capture(
     try:
         output = CaptureFiles.create(CAPTURE_ROOT, prefix="codex-prompt-")
         output.write_session(RunSession(
-            persistent=True, previous_run_id=previous_run_id, prompt=prompt,
+            previous_run_id=previous_run_id, prompt=prompt,
             submitted_at=datetime.now(UTC), workspace=workspace,
         ))
     except OSError as error:

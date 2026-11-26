@@ -95,7 +95,7 @@ const continuationNote = computed(() => {
 });
 const sidebarThreads = computed(() => {
   const current = conversation.value;
-  if (!current || current.legacy) return threads.value;
+  if (!current) return threads.value;
   return [current, ...threads.value.filter((thread) => thread.root_run_id !== current.root_run_id)]
     .sort((a, b) => String(b.last_activity_at ?? "").localeCompare(String(a.last_activity_at ?? "")));
 });
@@ -355,12 +355,13 @@ function provisionalTurn(runId, text) {
   };
 }
 
-function provisionalConversation(runId, text, legacy = false) {
+// Shown from the moment a new conversation is accepted until its saved detail loads.
+function provisionalConversation(runId, text) {
   const turn = provisionalTurn(runId, text);
   return {
-    thread_id: null, root_run_id: runId, latest_run_id: runId, legacy,
-    workspace: legacy ? null : selectedWorkspace.value?.path,
-    title: legacy ? t.app.savedRun : (text.trim().replace(/\s+/g, " ").slice(0, 80) || t.common.conversation),
+    thread_id: null, root_run_id: runId, latest_run_id: runId,
+    workspace: selectedWorkspace.value.path,
+    title: text.trim().replace(/\s+/g, " ").slice(0, 80),
     last_activity_at: turn.submitted_at, status: "active", turns: [turn], continuation: { state: "active" },
   };
 }
@@ -578,17 +579,10 @@ async function sendPrompt(text, origin = null) {
   }
 }
 
-async function resolveLocation(params, signal) {
+function resolveLocation(params, signal) {
   const threadId = params.get("thread_id");
-  const requested = params.get("run_id");
   if (threadId) return fetchConversation(`/threads/${encodeURIComponent(threadId)}`, signal);
-  try {
-    return await byRun(requested, signal);
-  } catch (error) {
-    signal.throwIfAborted();
-    if (!(error instanceof RunHttpError) || ![404, 503].includes(error.status)) throw error;
-    return provisionalConversation(requested, null, true);
-  }
+  return byRun(params.get("run_id"), signal);
 }
 
 async function restoreLocation({ focus = false } = {}) {

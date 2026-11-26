@@ -39,11 +39,11 @@ export function threadLink(thread) {
 export function groupConversations(threads) {
   const groups = new Map();
   for (const thread of threads) {
-    const path = thread.workspace || null;
+    const path = thread.workspace;
     if (!groups.has(path)) {
       groups.set(path, {
         path,
-        name: path ? workspaceName(path) : t.sidebar.earlier,
+        name: workspaceName(path),
         runId: thread.root_run_id,
         threads: [],
       });
