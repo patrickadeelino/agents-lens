@@ -8,6 +8,13 @@ from src.backend.application.conversation.run_continuation import RunSession
 from src.backend.infrastructure.storage.capture_files import CaptureFiles
 
 
+def readable_successor(capture: CaptureFiles) -> str | None:
+    # A damaged link is reported by the lineage of the conversation that owns it.
+    with suppress(OSError, ValueError):
+        return capture.successor_name()
+    return None
+
+
 class ConversationStore:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -31,7 +38,7 @@ class ConversationStore:
         unreadable: set[str] = set()
         linked: set[str] = set()
         for capture in self._prompt_captures():
-            if name := self._readable_successor(capture):
+            if name := readable_successor(capture):
                 linked.add(name)
             try:
                 session = capture.read_session()
@@ -42,13 +49,6 @@ class ConversationStore:
                 roots.append(capture)
         # A linked run is counted once, through the conversation that fails to read it.
         return roots, len(unreadable - linked)
-
-    @staticmethod
-    def _readable_successor(capture: CaptureFiles) -> str | None:
-        # A damaged link is reported by the lineage of the conversation that owns it.
-        with suppress(OSError, ValueError):
-            return capture.successor_name()
-        return None
 
     def _prompt_captures(self) -> Iterator[CaptureFiles]:
         for path in self.root.iterdir():

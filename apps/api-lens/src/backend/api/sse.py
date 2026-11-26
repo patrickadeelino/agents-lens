@@ -23,6 +23,13 @@ def end_frame(payload: dict[str, int | str | None] | None = None) -> str:
     return f"event: end\ndata: {json.dumps(payload or {})}\n\n"
 
 
+def subscription_end_frame(message: SubscriptionEnded) -> str:
+    payload: dict[str, int | str | None] = {"exit_code": message.exit_code}
+    if message.error is not None:
+        payload["error"] = message.error
+    return end_frame(payload)
+
+
 class RunSubscriptionResponse(ClosingStreamingResponse):
     """Encode a run subscription for the lifespan of one SSE connection."""
 
@@ -51,11 +58,4 @@ class RunSubscriptionResponse(ClosingStreamingResponse):
             return ": keep-alive\n\n"
         if isinstance(message, HistoryEvent):
             return record_frame(message.record, event_id=message.event_id)
-        return self._encode_end(message)
-
-    @staticmethod
-    def _encode_end(message: SubscriptionEnded) -> str:
-        payload: dict[str, int | str | None] = {"exit_code": message.exit_code}
-        if message.error is not None:
-            payload["error"] = message.error
-        return end_frame(payload)
+        return subscription_end_frame(message)

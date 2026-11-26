@@ -68,6 +68,14 @@ class _Scan:
     duplicated: set[UUID]
 
 
+def turn_state(capture: ConversationRun, result: ConversationResult | None, last_turn: str | None) -> str:
+    if capture.is_active():
+        return "active"
+    if result is None:
+        return "unconfirmed"
+    return turn_status(last_turn, result.exit_code, capture_failed=result.capture_failed)
+
+
 class Conversations[Run: ConversationRun]:
     def __init__(self, store: ConversationRepository[Run]) -> None:
         self.store = store
@@ -76,18 +84,10 @@ class Conversations[Run: ConversationRun]:
               details: bool) -> Turn:
         if session is None:
             raise ValueError("Conversation turn has no session.")
-        status = self._status(capture, result, result.last_turn if result else None)
+        status = turn_state(capture, result, result.last_turn if result else None)
         return Turn(capture.run_id, session.prompt, result.assistant_markdown if result else None,
                     session.submitted_at, result.finished_at if result else None,
                     result.exit_code if result else None, status, result.summary if result and details else None)
-
-    @staticmethod
-    def _status(capture: ConversationRun, result: ConversationResult | None, last_turn: str | None) -> str:
-        if capture.is_active():
-            return "active"
-        if result is None:
-            return "unconfirmed"
-        return turn_status(last_turn, result.exit_code, capture_failed=result.capture_failed)
 
     def _project(self, root: Run, *, details: bool) -> ThreadDetail | None:
         session = root.read_session()

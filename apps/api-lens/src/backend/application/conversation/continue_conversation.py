@@ -45,6 +45,18 @@ class AcceptedContinuation[Run]:
     workspace: str
 
 
+def reserve_turn[Run: ContinuableRun](origin: Run, output: Run) -> None:
+    # The link is written once: of two concurrent prompts, only one gets it.
+    try:
+        origin.reserve_successor(output)
+    except FileExistsError as error:
+        output.discard_unpublished()
+        raise PromptRefused("already_continued") from error
+    except OSError as error:
+        output.discard_unpublished()
+        raise PromptRefused("capture_unavailable") from error
+
+
 class ContinueConversation[Run: ContinuableRun]:
     def __init__(self, store: ContinuationStore[Run], executor: Callable[[], WorkspaceGate]) -> None:
         self._store = store
@@ -61,7 +73,7 @@ class ContinueConversation[Run: ContinuableRun]:
         output = create_run(self._store, RunSession(
             previous_run_id=run_id, prompt=prompt, submitted_at=datetime.now(UTC), workspace=workspace,
         ))
-        self._reserve(origin, output)
+        reserve_turn(origin, output)
         return AcceptedContinuation(output, thread_id, workspace)
 
     def _resumable(self, run_id: str) -> tuple[Run, UUID]:
@@ -81,15 +93,3 @@ class ContinueConversation[Run: ContinuableRun]:
         if thread_id is None:
             raise PromptRefused("not_continuable", continuation.reason)
         return origin, thread_id
-
-    @staticmethod
-    def _reserve(origin: Run, output: Run) -> None:
-        # The link is written once: of two concurrent prompts, only one gets it.
-        try:
-            origin.reserve_successor(output)
-        except FileExistsError as error:
-            output.discard_unpublished()
-            raise PromptRefused("already_continued") from error
-        except OSError as error:
-            output.discard_unpublished()
-            raise PromptRefused("capture_unavailable") from error
