@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, useId, watchEffect } from "vue";
+import { useAgentName } from "./agents.js";
 import { renderAgentMarkdown } from "./markdown.js";
 import { t } from "./messages.js";
 
@@ -10,6 +11,7 @@ const props = defineProps({
   controls: String,
 });
 defineEmits(["select"]);
+const agent = useAgentName();
 const revealed = ref(false);
 const collapsed = computed(() => props.final && !revealed.value);
 const message = ref(null);
@@ -58,7 +60,7 @@ watchEffect((onCleanup) => {
         <div v-if="html" class="agent-message final-reply-text" v-html="html"></div>
       </template>
       <template v-else>
-        <p class="run-kicker">{{ t.event.codex }}</p>
+        <p class="run-kicker">{{ agent }}</p>
         <div
           :id="messageId" ref="message" class="agent-message" :class="{ 'is-expanded': expanded, 'has-more': longMessage }"
           :inert="longMessage && !expanded" v-html="html"
@@ -71,11 +73,11 @@ watchEffect((onCleanup) => {
     </div>
     <button
       v-if="!entry.omitted && !final" type="button" class="event-select"
-      :aria-label="[reasoning ? t.event.inspectReasoning : t.event.inspectMessage, entry.offset].filter(Boolean).join(' ')"
+      :aria-label="[reasoning ? t.event.inspectReasoning : t.event.inspectMessage(agent), entry.offset].filter(Boolean).join(' ')"
       :aria-current="selected ? 'true' : undefined"
       :aria-controls="controls" :aria-expanded="controls ? selected : undefined"
       @click="$emit('select', entry, $event.currentTarget)"
-    ><span class="visually-hidden">{{ t.event.inspectMessage }}</span></button>
+    ><span class="visually-hidden">{{ t.event.inspectMessage(agent) }}</span></button>
   </article>
   <article v-else class="event-card">
     <div class="event-heading">

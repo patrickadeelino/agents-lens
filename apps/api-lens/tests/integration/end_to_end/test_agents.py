@@ -44,7 +44,7 @@ def test_an_unconfigured_agent_saves_nothing(
 ) -> None:
     backend, _ = live_http
     refused = backend.post("/runs", json=prompt_body("hello") | {"agent": "claude_code"})
-    assert (refused.status_code, refused.json()) == (409, {"detail": "This agent is not configured."})
+    assert (refused.status_code, refused.json()) == (409, {"detail": "agent_unavailable"})
     assert not list((run_workspace / "captures").glob("*"))
     assert backend.post("/runs", json=prompt_body("hello") | {"agent": "other"}).status_code == 422
 

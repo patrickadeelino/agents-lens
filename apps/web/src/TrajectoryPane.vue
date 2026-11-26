@@ -4,6 +4,7 @@ import { formatDuration, maskPaths, observedRunDuration, reportedTokens, tokenSu
 import { actionCallId, flattenTrajectory, observedFileChanges } from "./trajectoryProjection.js";
 import { CONNECTION, connectionLabel } from "./connectionState.js";
 import TrajectoryList from "./TrajectoryList.vue";
+import { useAgentName } from "./agents.js";
 import { t } from "./messages.js";
 
 const props = defineProps({
@@ -80,7 +81,8 @@ function openAncestors(entry) {
 }
 const tokenDetails = computed(() => props.summary
   ? reportedTokens({ type: "turn.completed", usage: props.summary.tokens }) : data.value.tokens);
-const tokens = computed(() => tokenSummary(tokenDetails.value));
+const agent = useAgentName();
+const tokens = computed(() => tokenSummary(tokenDetails.value, agent.value));
 const actions = computed(() => props.summary ? props.summary.actions : data.value.actions.length);
 const failures = computed(() => props.summary ? props.summary.failures : data.value.failures.length);
 const partial = computed(() => props.summary ? props.summary.partial : nextBefore.value != null);

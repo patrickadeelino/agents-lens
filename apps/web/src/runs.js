@@ -39,19 +39,19 @@ async function* readFrames(body) {
   }
 }
 
-export function streamPrompt(prompt, callbacks, workspace) {
-  return streamNewRun("/runs", prompt, callbacks, workspace);
+export function streamPrompt(prompt, callbacks, workspace, agent) {
+  return streamNewRun("/runs", prompt, callbacks, { workspace_id: workspace?.id, workspace_run_id: workspace?.runId, agent });
 }
 
 export function streamContinuation(runId, prompt, callbacks) {
   return streamNewRun(`/runs/${encodeURIComponent(runId)}/continue`, prompt, callbacks);
 }
 
-async function streamNewRun(url, prompt, { signal, onAccepted, onRecord }, workspace) {
+async function streamNewRun(url, prompt, { signal, onAccepted, onRecord }, fields = {}) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ prompt, workspace_id: workspace?.id, workspace_run_id: workspace?.runId }),
+    body: JSON.stringify({ prompt, ...fields }),
     signal,
   });
 

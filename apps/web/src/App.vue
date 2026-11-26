@@ -1,11 +1,12 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, provide, reactive, ref, shallowRef, watch } from "vue";
 import ConversationSidebar from "./ConversationSidebar.vue";
 import ConversationTurn from "./ConversationTurn.vue";
 import DemoHome from "./DemoHome.vue";
 import FolderPicker from "./FolderPicker.vue";
 import HistoricalTrajectory from "./HistoricalTrajectory.vue";
 import TrajectoryPane from "./TrajectoryPane.vue";
+import { agentName, chooseAgent, DEFAULT_AGENT, loadAgents } from "./agents.js";
 import { inspectionUrl, resolveInspectedRun, workspaceName } from "./conversationNavigation.js";
 import { CONNECTION } from "./connectionState.js";
 import { maskPaths } from "./eventPresentation.js";
@@ -39,6 +40,8 @@ const wideSidebar = ref(sidebarQuery.matches);
 const busy = ref(false);
 const composerError = ref("");
 const selectedWorkspace = ref(null);
+const availableAgents = ref([]);
+const selectedAgent = ref(DEFAULT_AGENT);
 const pickingWorkspace = ref(false);
 const executorReady = ref(null);
 const demoMode = ref(false);
@@ -69,6 +72,9 @@ const runTracker = createRunTracker({
   wait: () => new Promise((resolve) => setTimeout(resolve, 2000)),
 });
 
+// A saved conversation keeps its agent; the new-conversation screen shows the chosen one.
+const currentAgent = computed(() => view.value === "thread" ? conversation.value?.agent : selectedAgent.value);
+provide("agent", currentAgent);
 const turns = computed(() => conversation.value?.turns ?? []);
 const selectedTurn = computed(() => turns.value.find((turn) => turn.run_id === inspectedRunId.value));
 const selectedNumber = computed(() => turns.value.findIndex((turn) => turn.run_id === inspectedRunId.value) + 1 || null);
@@ -91,7 +97,8 @@ const continuationNote = computed(() => {
   if (executorReady.value !== true && conversation.value?.continuation?.state === "available") {
     return executorReady.value === false ? t.continuation.needsExecutor : t.continuation.checkingExecutor;
   }
-  return t.continuation.reasons[conversation.value?.continuation?.state] ?? t.continuation.noSession;
+  return t.continuation.reasons[conversation.value?.continuation?.state]
+    ?? t.continuation.noSession(agentName(currentAgent.value ?? DEFAULT_AGENT));
 });
 const sidebarThreads = computed(() => {
   const current = conversation.value;
@@ -361,6 +368,7 @@ function provisionalConversation(runId, text) {
   return {
     thread_id: null, root_run_id: runId, latest_run_id: runId,
     workspace: selectedWorkspace.value.path,
+    agent: selectedAgent.value,
     title: text.trim().replace(/\s+/g, " ").slice(0, 80),
     last_activity_at: turn.submitted_at, status: "active", turns: [turn], continuation: { state: "active" },
   };
@@ -493,6 +501,7 @@ function resumeObservation(runId) {
 
 function submitError(error) {
   if (error instanceof RunHttpError) {
+    if (error.detail === "agent_unavailable") return t.agents.unavailable;
     return maskPaths(error.detail) || t.app.sendFailed(error.status);
   }
   return t.app.sendUnconfirmed;
@@ -514,11 +523,17 @@ async function checkExecutor() {
     const response = await fetch("/ready", { cache: "no-store", signal: AbortSignal.timeout(5000) });
     demoMode.value = response.headers.get("X-Agent-Lens-Mode") === "demo";
     executorReady.value = response.status === 204 && !demoMode.value;
+    if (executorReady.value) await refreshAgents();
   } catch {
     executorReady.value = false;
   } finally {
     checkingExecutor.value = false;
   }
+}
+
+async function refreshAgents() {
+  availableAgents.value = await loadAgents();
+  selectedAgent.value = chooseAgent(selectedAgent.value, availableAgents.value);
 }
 
 function chooseWorkspace() {
@@ -553,7 +568,7 @@ async function sendPrompt(text, origin = null) {
         turn = observedTurn(turn, record);
       },
     };
-    const result = origin ? await streamContinuation(origin, text, callbacks) : await streamPrompt(text, callbacks, selectedWorkspace.value);
+    const result = origin ? await streamContinuation(origin, text, callbacks) : await streamPrompt(text, callbacks, selectedWorkspace.value, selectedAgent.value);
     signal.throwIfAborted();
     if (result) {
       finishCapture(result, turn);
@@ -569,7 +584,7 @@ async function sendPrompt(text, origin = null) {
       else composerError.value = t.busy.refused;
       loadThreads();
     } else if (!origin) composerError.value = submitError(error);
-    else if (error instanceof RunHttpError && error.status === 409) {
+    else if (error instanceof RunHttpError && error.status === 409 && error.detail !== "agent_unavailable") {
       continuationError.value = t.continuation.alreadyContinued;
       const refreshed = await refreshConversation(origin, signal).catch(() => null);
       if (refreshed?.status === "active") resumeObservation(refreshed.latest_run_id);
@@ -699,7 +714,7 @@ onUnmounted(() => {
         </p>
         <form id="run-form" class="run-form" @submit.prevent="sendPrompt(prompt)">
           <p class="view-caption">{{ t.common.newConversation }}</p>
-          <h1 id="composer-title"><label for="prompt">{{ t.composer.heading }}</label></h1>
+          <h1 id="composer-title"><label for="prompt">{{ t.composer.heading(agentName(selectedAgent)) }}</label></h1>
           <div class="composer-card">
             <textarea id="prompt" ref="promptInput" v-model="prompt" name="prompt" rows="5" required :readonly="busy"
               :placeholder="t.composer.placeholder"
@@ -713,6 +728,10 @@ onUnmounted(() => {
                 <span>{{ selectedWorkspace ? workspaceName(selectedWorkspace.path) : t.composer.selectFolder }}</span>
                 <svg class="folder-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>
               </button>
+              <select v-if="availableAgents.length > 1" v-model="selectedAgent" class="agent-select" name="agent"
+                :aria-label="t.agents.label" :disabled="busy">
+                <option v-for="agent in availableAgents" :key="agent" :value="agent">{{ agentName(agent) }}</option>
+              </select>
               <div class="composer-submit">
                 <kbd>{{ t.composer.shortcut }}</kbd>
                 <button id="execute" type="submit" class="run-button" :disabled="!executorReady || busy || pickingWorkspace || !selectedWorkspace || !!runningRunId || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
@@ -736,6 +755,7 @@ onUnmounted(() => {
             <h1 ref="conversationHeading" tabindex="-1" :title="conversation.title">{{ conversation.title }}</h1>
             <p v-if="conversation.workspace" class="conversation-workspace" :title="conversation.workspace">
               {{ workspaceName(conversation.workspace) }}
+              <template v-if="conversation.agent"> · {{ agentName(conversation.agent) }}</template>
             </p>
           </div>
           <div v-if="activeTurn" class="conversation-shortcuts">

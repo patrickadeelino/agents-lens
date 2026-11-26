@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, ref, watch } from "vue";
+import { agentName, DEFAULT_AGENT } from "./agents.js";
 import { activityLabel, groupConversations, threadLink } from "./conversationNavigation.js";
 import { t } from "./messages.js";
 
@@ -13,6 +14,8 @@ const props = defineProps({
 });
 defineEmits(["new", "open", "retry", "close"]);
 const groups = computed(() => groupConversations(props.threads));
+// Names every conversation's agent only once the history has more than the default one.
+const showAgents = computed(() => props.threads.some((thread) => thread.agent && thread.agent !== DEFAULT_AGENT));
 const closeButton = ref(null);
 const panel = ref(null);
 const labels = {
@@ -79,7 +82,7 @@ watch(() => props.drawer, async (open) => {
                   <svg v-else-if="thread.status === 'failed'" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg>
                 </span>
                 <strong :title="thread.title">{{ thread.title }}</strong>
-                <small>{{ thread.turns && thread.status === "active" ? t.sidebar.turnProgress(thread.turns.length) : labels[thread.status] }}<template v-if="activityLabel(thread.last_activity_at)"> · {{ activityLabel(thread.last_activity_at) }}</template></small>
+                <small>{{ thread.turns && thread.status === "active" ? t.sidebar.turnProgress(thread.turns.length) : labels[thread.status] }}<template v-if="activityLabel(thread.last_activity_at)"> · {{ activityLabel(thread.last_activity_at) }}</template><template v-if="showAgents"> · {{ agentName(thread.agent) }}</template></small>
               </a>
             </li>
           </ul>

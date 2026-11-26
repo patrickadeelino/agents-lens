@@ -204,14 +204,14 @@ export function reportedTokens(event) {
     .map(({ field, label, value }) => ({ field, label, amount: value, value: numbers.format(value) }));
 }
 
-export function tokenSummary(tokens) {
+export function tokenSummary(tokens, agent) {
   const input = tokens.find(({ field }) => field === "input_tokens");
   const output = tokens.find(({ field }) => field === "output_tokens");
   if (input && output && Number.isSafeInteger(input.amount + output.amount)) {
-    return { value: numbers.format(input.amount + output.amount), label: t.tokens.total };
+    return { value: numbers.format(input.amount + output.amount), label: t.tokens.total(agent) };
   }
   const known = input ?? output;
-  return known ? { value: known.value, label: t.tokens.partial(known.label) } : null;
+  return known ? { value: known.value, label: t.tokens.partial(known.label, agent) } : null;
 }
 
 export function describeTool({ event }, previous) {

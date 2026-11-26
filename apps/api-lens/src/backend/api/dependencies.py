@@ -67,7 +67,7 @@ REFUSALS: dict[Refusal, tuple[int, str]] = {
     "selection_expired": (409, "Select the folder again."),
     "executor_unavailable": (503, "Executor unavailable."),
     "capture_unavailable": (503, "Capture directory is unavailable."),
-    "agent_unavailable": (409, "This agent is not configured."),
+    "agent_unavailable": (409, "agent_unavailable"),
 }
 
 

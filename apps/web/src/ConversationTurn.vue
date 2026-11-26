@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, useId } from "vue";
+import { useAgentName } from "./agents.js";
 import { maskPaths } from "./eventPresentation.js";
 import { renderAgentMarkdown } from "./markdown.js";
 import { t } from "./messages.js";
@@ -14,6 +15,7 @@ const props = defineProps({
   observed: Object,
 });
 defineEmits(["inspect"]);
+const agent = useAgentName();
 const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 const timestamp = computed(() => props.turn.submitted_at ?? props.turn.finished_at);
 const time = computed(() => {
@@ -52,7 +54,7 @@ const status = computed(() => ({
       <p v-if="!reply" class="turn-reply-preview">{{ activity || (turn.status === 'active' ? t.turn.waitingReply : t.turn.noReply) }}</p>
       <div v-else class="turn-response">
         <div class="turn-response-header">
-          <h3>{{ t.turn.reply }}</h3>
+          <h3>{{ t.turn.reply(agent) }}</h3>
           <button type="button" class="link-button reply-toggle" :aria-controls="replyId" :aria-expanded="expanded"
             @click="expanded = !expanded">{{ expanded ? t.turn.collapseReply : t.turn.showReply }}</button>
         </div>

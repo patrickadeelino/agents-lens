@@ -648,6 +648,8 @@ pre {
 .composer-bar .folder-button { max-inline-size: 100%; min-inline-size: 0; padding-inline: 12px; background: var(--bg); }
 .composer-bar .folder-button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-muted); }
 .folder-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-bar .agent-select { margin-inline-end: auto; min-block-size: 40px; padding-inline: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg); color: inherit; font: inherit; font-size: .875rem; }
+.composer-bar .agent-select:hover:not(:disabled) { border-color: var(--line-strong); }
 .composer-bar .folder-chevron { inline-size: 14px; color: var(--ink-muted); }
 .composer-submit { display: flex; align-items: center; gap: 12px; margin-inline-start: auto; }
 .composer-submit kbd { color: var(--ink-muted); font: var(--text-small)/1.5 var(--font-code); }
@@ -968,7 +970,7 @@ pre {
   .trajectory-events .action-index { display: none; }
   .app-shell :is(.reply-toggle, .inspect-turn, .event-filters button, .compact-button, .trajectory-mobile-back) { min-block-size: 44px; }
   .turn-state-group { flex: 1 1 auto; align-self: center; }
-  .app-shell .composer-bar button { min-block-size: 44px; }
+  .app-shell .composer-bar button, .app-shell .composer-bar .agent-select { min-block-size: 44px; }
   .composer-submit kbd { display: none; }
 }
 @media (max-height: 540px) {
