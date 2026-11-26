@@ -294,6 +294,24 @@ emit('{"type":"turn.completed"}', flush=True)
 """
 
 
+def open_listener(unix_path: Path | None) -> tuple[socket.socket, str]:
+    if unix_path is None:
+        listener = socket.create_server(("127.0.0.1", 0))
+        return listener, f"http://127.0.0.1:{listener.getsockname()[1]}"
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(unix_path))
+    listener.listen()
+    return listener, "http://executor-host"
+
+
+def wait_until_started(server: uvicorn.Server) -> None:
+    deadline = monotonic() + 5
+    while not server.started:
+        if monotonic() >= deadline:
+            pytest.fail("Uvicorn did not start")
+        sleep(0.01)
+
+
 @contextmanager
 def running_server(
     application: ASGIApp, request_finished: Event, *, unix_path: Path | None = None,
@@ -304,23 +322,13 @@ def running_server(
         finally:
             request_finished.set()
 
-    listener = socket.socket(socket.AF_UNIX) if unix_path is not None else socket.create_server(("127.0.0.1", 0))
+    listener, url = open_listener(unix_path)
     with listener:
-        if unix_path is not None:
-            listener.bind(str(unix_path))
-            listener.listen()
-            url = "http://executor-host"
-        else:
-            url = f"http://127.0.0.1:{listener.getsockname()[1]}"
         server = uvicorn.Server(uvicorn.Config(observe, lifespan="off", log_level="warning"))
         thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
         thread.start()
         try:
-            deadline = monotonic() + 5
-            while not server.started:
-                if monotonic() >= deadline:
-                    pytest.fail("Uvicorn did not start")
-                sleep(0.01)
+            wait_until_started(server)
             yield url
         finally:
             server.should_exit = True

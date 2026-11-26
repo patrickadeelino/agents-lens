@@ -208,11 +208,16 @@ class AppServerTurn:
         async for event in self.capture_events(capture, pending):
             yield event
 
+    async def live_events(self, capture: DelegationCapture, pending: list[Json]) -> AsyncIterator[Json]:
+        async for note in self.notifications(capture, pending):
+            for event in self.scoped_events(capture, note):
+                yield event
+
     async def capture_events(self, capture: DelegationCapture, pending: list[Json]) -> AsyncIterator[Json]:
+        """Yield the turn's events and, if the capture breaks, what was still held before failing."""
         try:
-            async for note in self.notifications(capture, pending):
-                for event in self.scoped_events(capture, note):
-                    yield event
+            async for event in self.live_events(capture, pending):
+                yield event
         except Exception:
             for event in self.interrupted_events(capture):
                 yield event

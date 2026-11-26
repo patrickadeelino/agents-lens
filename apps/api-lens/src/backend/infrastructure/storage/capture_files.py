@@ -5,6 +5,7 @@ from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import takewhile
 from os import link
 from pathlib import Path
 from tempfile import NamedTemporaryFile, mkdtemp
@@ -151,11 +152,9 @@ class CaptureFiles:
             link(temporary.name, self.directory / name)
 
     def read_trace_lines(self, *, finished: bool) -> Generator[str]:
+        # An append in progress may end mid-line or mid-character.
         with self.open_saved_trace() as trace:
-            for line in trace:
-                # An append in progress may end mid-line or mid-character.
-                if not finished and not line.endswith(b"\n"):
-                    break
+            for line in takewhile(lambda line: finished or line.endswith(b"\n"), trace):
                 yield line.decode("utf-8")
 
     def open_saved_trace(self) -> BinaryIO:

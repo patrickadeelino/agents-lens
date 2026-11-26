@@ -72,6 +72,12 @@ class RunSseDelivery:
         finish_span(self.span, outcome, error_code=error_code)
 
 
+def end_payload(result: CaptureResult) -> dict[str, int | str | None]:
+    if result.exit_code is not None:
+        return {"exit_code": result.exit_code}
+    return {"exit_code": None, "error": result.error or "execution_failed"}
+
+
 async def run_frames(
     messages: AsyncGenerator[FlushedRecord | CaptureResult], delivery: RunSseDelivery,
 ) -> AsyncGenerator[str]:
@@ -81,10 +87,7 @@ async def run_frames(
             # The response iterator resumes after ASGI send returns.
             delivery.record_sent(message)
         else:
-            payload: dict[str, int | str | None] = {"exit_code": message.exit_code}
-            if message.exit_code is None:
-                payload["error"] = message.error or "execution_failed"
-            yield end_frame(payload)
+            yield end_frame(end_payload(message))
             delivery.end_sent(message)
 
 

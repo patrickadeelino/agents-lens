@@ -8,7 +8,7 @@ from time import monotonic
 
 from fastapi import FastAPI
 from opentelemetry.context import Context
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import Span, SpanKind
 from starlette.datastructures import Headers, State
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -67,21 +67,23 @@ class ObserveHTTP:
             observe_operation(self.state.telemetry, run_id),
             operation_span(f"{method} {path}", kind=SpanKind.SERVER, context=context) as span,
         ):
-            started_at = monotonic()
-            delivery = Delivery(send)
-            outcome: Outcome = "failed"
-            error_code: str | None = "http_failure"
-            try:
-                await self.app(scope, receive, delivery.forward)
-                outcome, error_code = delivery.result()
-            except (CancelledError, ClientDisconnect):
-                outcome, error_code = "disconnected", "client_disconnected"
-                raise
-            finally:
-                if delivery.status is not None:
-                    span.set_attribute("http.response.status_code", delivery.status)
-                finish_span(span, outcome, error_code=error_code)
-                event_log(f"{prefix}.{outcome}", "http", outcome, error_code=error_code, started_at=started_at)
+            await self._observe(span, prefix, scope, receive, Delivery(send))
+
+    async def _observe(self, span: Span, prefix: str, scope: Scope, receive: Receive, delivery: Delivery) -> None:
+        started_at = monotonic()
+        outcome: Outcome = "failed"
+        error_code: str | None = "http_failure"
+        try:
+            await self.app(scope, receive, delivery.forward)
+            outcome, error_code = delivery.result()
+        except (CancelledError, ClientDisconnect):
+            outcome, error_code = "disconnected", "client_disconnected"
+            raise
+        finally:
+            if delivery.status is not None:
+                span.set_attribute("http.response.status_code", delivery.status)
+            finish_span(span, outcome, error_code=error_code)
+            event_log(f"{prefix}.{outcome}", "http", outcome, error_code=error_code, started_at=started_at)
 
 
 def observed_app(
