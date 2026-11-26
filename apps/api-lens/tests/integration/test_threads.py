@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import app
@@ -34,13 +35,62 @@ def test_listing_reads_metadata_and_orders_conversations(tmp_path: Path, monkeyp
     assert threads[1]["title"] == "first prompt"
 
 
+@pytest.mark.parametrize(("name", "contents"), [
+    ("result.json", '{"exit_c'), ("session.json", '{"pers'), ("next-run", "codex-prompt-gone"),
+])
+def test_a_damaged_conversation_does_not_take_down_the_others(
+    tmp_path: Path, monkeypatch, name: str, contents: str,
+) -> None:
+    monkeypatch.setattr(dependencies, "CAPTURE_ROOT", tmp_path)
+    good = saved(tmp_path, "good", "11111111-1111-4111-8111-111111111111", datetime(2026, 1, 1, tzinfo=UTC))
+    bad = saved(tmp_path, "bad", "22222222-2222-4222-8222-222222222222", datetime(2026, 1, 2, tzinfo=UTC))
+    (bad.directory / name).write_text(contents, encoding="utf-8")
+    with TestClient(app, base_url="http://localhost") as client:
+        listing = client.get("/threads")
+        assert listing.status_code == 200
+        assert [thread["root_run_id"] for thread in listing.json()["threads"]] == [good.directory.name]
+        assert listing.json()["unavailable"] == 1
+        assert client.get(f"/threads/by-run/{good.directory.name}").status_code == 200
+        assert client.get("/threads/11111111-1111-4111-8111-111111111111").status_code == 200
+        assert client.get("/threads/22222222-2222-4222-8222-222222222222").status_code == 503
+        assert client.get(f"/threads/by-run/{bad.directory.name}").status_code == 503
+        assert client.post(f"/runs/{bad.directory.name}/continue", json={"prompt": "Next"}).status_code == 503
+        # Without an executor, reaching that check proves the good conversation passed the history checks.
+        monkeypatch.delenv("AGENT_LENS_EXECUTOR_SOCKET", raising=False)
+        continued = client.post(f"/runs/{good.directory.name}/continue", json={"prompt": "Next"})
+        assert continued.json()["detail"] == "Executor socket is not configured."
+
+
+def test_a_damaged_later_turn_counts_its_conversation_once(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(dependencies, "CAPTURE_ROOT", tmp_path)
+    first = saved(tmp_path, "first", "11111111-1111-4111-8111-111111111111", datetime(2026, 1, 1, tzinfo=UTC))
+    second = saved(tmp_path, "second", "11111111-1111-4111-8111-111111111111", datetime(2026, 1, 2, tzinfo=UTC))
+    first.reserve_successor(second)
+    (second.directory / "session.json").write_text("{", encoding="utf-8")
+    with TestClient(app, base_url="http://localhost") as client:
+        assert client.get("/threads").json() == {"threads": [], "unavailable": 1}
+
+
+def test_conversations_sharing_an_identity_are_left_out(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(dependencies, "CAPTURE_ROOT", tmp_path)
+    shared = "11111111-1111-4111-8111-111111111111"
+    first = saved(tmp_path, "first", shared, datetime(2026, 1, 1, tzinfo=UTC))
+    saved(tmp_path, "second", shared, datetime(2026, 1, 2, tzinfo=UTC))
+    with TestClient(app, base_url="http://localhost") as client:
+        assert client.get("/threads").json() == {"threads": [], "unavailable": 2}
+        assert client.get(f"/threads/by-run/{first.directory.name}").status_code == 503
+        assert client.get(f"/threads/{shared}").status_code == 503
+
+
 def test_bad_successor_does_not_merge_conversations(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(dependencies, "CAPTURE_ROOT", tmp_path)
     first = saved(tmp_path, "first", "11111111-1111-4111-8111-111111111111", datetime(2026, 1, 1, tzinfo=UTC))
     second = saved(tmp_path, "second", "22222222-2222-4222-8222-222222222222", datetime(2026, 1, 2, tzinfo=UTC))
     first.reserve_successor(second)
     with TestClient(app, base_url="http://localhost") as client:
-        assert client.get("/threads").status_code == 503
+        listing = client.get("/threads").json()
+        assert [thread["root_run_id"] for thread in listing["threads"]] == [second.directory.name]
+        assert listing["unavailable"] == 1
         assert client.get(f"/threads/by-run/{first.directory.name}").status_code == 503
         assert client.post(f"/runs/{first.directory.name}/continue", json={"prompt": "Next"}).status_code == 503
 

@@ -589,7 +589,7 @@ def test_readiness_checks_the_host_executor(
     assert backend.get("/ready").status_code == 204
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "missing.sock"))
     assert backend.get("/ready").status_code == 503
-    assert backend.get("/threads").json() == {"threads": []}
+    assert backend.get("/threads").json() == {"threads": [], "unavailable": 0}
 
 
 @pytest.mark.usefixtures("executor_socket")

@@ -1,6 +1,7 @@
 """Project conversation summaries from accepted capture lineage."""
 
 import re
+from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,6 +13,7 @@ from src.domain.trace_reader import read_timed_trace
 from src.domain.turn_summary import TurnSummary
 from src.infrastructure.capture_files import CaptureFiles, SavedResult
 from src.infrastructure.conversation_store import ConversationStore
+from src.observability import event_log
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,19 @@ def legacy_summary(capture: CaptureFiles, finished: bool) -> tuple[str | None, s
     return reply, last_turn
 
 
+@dataclass(frozen=True)
+class ThreadList:
+    threads: list[ThreadSummary]
+    unavailable: int
+
+
+@dataclass(frozen=True)
+class _Scan:
+    threads: list[ThreadDetail]
+    unavailable: int
+    duplicated: set[UUID]
+
+
 class Conversations:
     def __init__(self, store: ConversationStore) -> None:
         self.store = store
@@ -117,16 +132,32 @@ class Conversations:
                             preview(latest.prompt or latest.assistant_markdown, 140), max(dates, default=None),
                             latest.status, session.workspace if session else None, turns, continuation)
 
-    def list(self) -> list[ThreadSummary]:
-        threads = [thread for root in self.store.roots() if (thread := self._project(root, details=False))]
-        ids = [thread.thread_id for thread in threads if thread.thread_id is not None]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Duplicate conversation identity.")
+    def _scan(self) -> _Scan:
+        """Project every conversation, leaving out the damaged ones without failing the others."""
+        roots, unavailable = self.store.roots()
+        threads = []
+        for root in roots:
+            try:
+                thread = self._project(root, details=False)
+            except (OSError, ValueError):
+                event_log("conversation.skipped", "history", "failed", error_code="capture_unreadable")
+                unavailable += 1
+                continue
+            if thread:
+                threads.append(thread)
+        counts = Counter(thread.thread_id for thread in threads if thread.thread_id is not None)
+        duplicated = {thread_id for thread_id, total in counts.items() if total > 1}
+        readable = [thread for thread in threads if thread.thread_id not in duplicated]
+        return _Scan(readable, unavailable + len(threads) - len(readable), duplicated)
+
+    def list(self) -> ThreadList:
+        scan = self._scan()
+        threads = scan.threads
         threads.sort(key=lambda thread: thread.root_run_id)
         threads.sort(key=lambda thread: thread.last_activity_at.timestamp() if thread.last_activity_at else float("-inf"),
                      reverse=True)
-        return [ThreadSummary(t.thread_id, t.root_run_id, t.latest_run_id, t.title, t.preview,
-                              t.last_activity_at, t.status, t.workspace) for t in threads]
+        return ThreadList([ThreadSummary(t.thread_id, t.root_run_id, t.latest_run_id, t.title, t.preview,
+                                         t.last_activity_at, t.status, t.workspace) for t in threads], scan.unavailable)
 
     def by_run(self, run_id: str) -> ThreadDetail | None:
         capture = self.store.find(run_id)
@@ -134,10 +165,16 @@ class Conversations:
         detail = self._project(root, details=True)
         if detail and not any(turn.run_id == run_id for turn in detail.turns):
             raise ValueError("Invalid conversation lineage.")
-        if detail and detail.thread_id is not None:
-            self.list()
+        if detail and detail.thread_id is not None and detail.thread_id in self._scan().duplicated:
+            raise ValueError("Duplicate conversation identity.")
         return detail
 
     def by_thread(self, thread_id: UUID) -> ThreadDetail | None:
-        matches = [thread for thread in self.list() if thread.thread_id == thread_id]
-        return self.by_run(matches[0].root_run_id) if matches else None
+        scan = self._scan()
+        for thread in scan.threads:
+            if thread.thread_id == thread_id:
+                return self.by_run(thread.root_run_id)
+        # With damaged captures, a missing thread cannot be told apart from an unreadable one.
+        if scan.unavailable:
+            raise ValueError("Conversation may be unreadable.")
+        return None

@@ -21,6 +21,7 @@ const navigationError = ref("");
 const threads = ref([]);
 const threadsLoading = ref(false);
 const threadsError = ref(false);
+const unavailableThreads = ref(0);
 const conversation = shallowRef(null);
 const activeRunId = ref(null);
 const inspectedRunId = ref(null);
@@ -244,6 +245,7 @@ async function loadThreads() {
     const payload = await response.json();
     request.signal.throwIfAborted();
     threads.value = payload.threads;
+    unavailableThreads.value = payload.unavailable ?? 0;
     const running = payload.threads.find((thread) => thread.status === "active");
     if (running) runTracker.track(running.latest_run_id);
   } catch {
@@ -676,7 +678,7 @@ onUnmounted(() => {
   <div class="app-shell" :class="{ 'has-trajectory': hasPane, 'drawer-visible': drawer }">
     <p class="visually-hidden" role="status">{{ announcement }}</p>
     <ConversationSidebar :threads="sidebarThreads" :current-root="conversation?.root_run_id" :loading="threadsLoading"
-      :error="threadsError" :drawer="drawer"
+      :error="threadsError" :unavailable="unavailableThreads" :drawer="drawer"
       @new="newConversation" @open="onThreadClick" @retry="loadThreads" @close="closeDrawer()" />
 
     <header class="compact-navigation" :inert="drawer">

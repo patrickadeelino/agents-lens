@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Response
 
 from src.api import dependencies
 from src.api.dependencies import RunIdPath
-from src.application.conversations import Conversations, ThreadDetail, ThreadSummary
+from src.application.conversations import Conversations, ThreadDetail, ThreadList
 from src.infrastructure.conversation_store import ConversationStore
 
 router = APIRouter()
@@ -21,10 +21,10 @@ def unavailable(error: Exception) -> HTTPException:
 
 
 @router.get("/threads")
-def threads(response: Response) -> dict[str, list[ThreadSummary]]:
+def threads(response: Response) -> ThreadList:
     response.headers["Cache-Control"] = "no-store"
     try:
-        return {"threads": service().list()}
+        return service().list()
     except (OSError, ValueError) as error:
         raise unavailable(error) from error
 

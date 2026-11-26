@@ -8,6 +8,7 @@ const props = defineProps({
   currentRoot: String,
   loading: Boolean,
   error: Boolean,
+  unavailable: { type: Number, default: 0 },
   drawer: Boolean,
 });
 defineEmits(["new", "open", "retry", "close"]);
@@ -57,12 +58,13 @@ watch(() => props.drawer, async (open) => {
 
     <nav class="sidebar-history" aria-labelledby="conversation-list-title">
       <h2 id="conversation-list-title">{{ t.sidebar.folders }}</h2>
+      <p v-if="unavailable && !error" class="quiet-text" role="status">{{ t.sidebar.unreadable(unavailable) }}</p>
       <p v-if="loading && !threads.length" class="quiet-text" role="status">{{ t.sidebar.loading }}</p>
       <div v-else-if="error" class="sidebar-notice" role="alert">
         <p>{{ t.sidebar.loadFailed }}</p>
         <button type="button" class="link-button" @click="$emit('retry')">{{ t.common.tryAgain }}</button>
       </div>
-      <p v-else-if="!threads.length" class="quiet-text">{{ t.sidebar.empty }}</p>
+      <p v-else-if="!threads.length && !unavailable" class="quiet-text">{{ t.sidebar.empty }}</p>
       <section v-for="group in groups" :key="group.path ?? ''" class="workspace-group">
         <details open>
           <summary :title="group.path ?? undefined">

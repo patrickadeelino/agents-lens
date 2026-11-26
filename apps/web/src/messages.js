@@ -181,6 +181,7 @@ export const t = Object.freeze({
     sendUnconfirmed: "Sending was not confirmed. Check the latest conversation before sending again.",
   },
   sidebar: {
+    unreadable: (total) => `${count(total, "conversation")} could not be read.`,
     history: "Conversation history",
     closeHistory: "Close history",
     folders: "Folders",

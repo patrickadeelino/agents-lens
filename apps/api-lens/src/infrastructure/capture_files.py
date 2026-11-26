@@ -113,10 +113,15 @@ class CaptureFiles:
     def reserve_successor(self, successor: Self) -> None:
         self._publish_once(SUCCESSOR_NAME, successor.directory.name)
 
-    def successor(self) -> Self | None:
+    def successor_name(self) -> str | None:
         try:
-            name = self._saved_file(SUCCESSOR_NAME).read_text(encoding="utf-8")
+            return self._saved_file(SUCCESSOR_NAME).read_text(encoding="utf-8")
         except FileNotFoundError:
+            return None
+
+    def successor(self) -> Self | None:
+        name = self.successor_name()
+        if name is None:
             return None
         if not re.fullmatch(r"codex-prompt-[A-Za-z0-9_-]+", name):
             raise ValueError("Invalid continuation link.")
