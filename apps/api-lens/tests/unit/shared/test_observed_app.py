@@ -3,32 +3,7 @@ from asyncio import CancelledError
 
 import pytest
 
-from src.executor.codex.app_server import AppServerTurn
 from src.shared.observed_app import Delivery, ObserveHTTP
-
-
-class BrokenTurn(AppServerTurn):
-    def __init__(self) -> None:
-        pass
-
-    async def live_events(self, capture, pending):
-        yield {"type": "live"}
-        raise ValueError("broken stream")
-
-    def interrupted_events(self, capture):
-        yield {"type": "held"}
-
-
-def test_a_broken_capture_yields_what_was_held_before_failing() -> None:
-    events: list[object] = []
-
-    async def collect() -> None:
-        async for event in BrokenTurn().capture_events(None, []):  # type: ignore[arg-type]
-            events.append(event)
-
-    with pytest.raises(ValueError, match="broken stream"):
-        asyncio.run(collect())
-    assert events == [{"type": "live"}, {"type": "held"}]
 
 
 def test_a_cancelled_request_is_recorded_as_disconnected(monkeypatch: pytest.MonkeyPatch) -> None:

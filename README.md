@@ -81,7 +81,7 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 **A tool's result is not the turn's result.** A turn can complete after a command fails. A command that never reports its end is shown as **Result unconfirmed** instead of being counted as a success or a failure. See the [command timeline](apps/web/src/timeline.js).
 
-**Disconnects do not stop the work.** The capture keeps recording if the browser goes away. The browser comes back with the ID of the last event it received and [reads from there](apps/api-lens/src/backend/application/history/run_subscription.py). Integration tests cover [the disconnect](apps/api-lens/tests/integration/test_runs.py) and [the resume](apps/api-lens/tests/integration/test_run_history.py).
+**Disconnects do not stop the work.** The capture keeps recording if the browser goes away. The browser comes back with the ID of the last event it received and [reads from there](apps/api-lens/src/backend/application/history/run_subscription.py). Integration tests cover [the disconnect](apps/api-lens/tests/integration/end_to_end/test_runs.py) and [the resume](apps/api-lens/tests/integration/backend/test_run_history.py).
 
 **Follow-ups stay on one thread.** A follow-up resumes the Codex thread of the latest run, and each run accepts [a single successor](apps/api-lens/src/backend/infrastructure/storage/capture_files.py), so two requests cannot fork a conversation. A turn that failed without confirming its session can still be continued: the follow-up resumes the thread of the nearest earlier turn that confirmed one. If the first turn fails that way, there is no thread to resume. Token counts of a resumed turn exclude the earlier turns.
 
@@ -91,7 +91,7 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 **Sandboxing inside Docker.** Codex isolates each command with Bubblewrap, which Docker's default profiles block: relaxing only seccomp or only AppArmor was not enough in testing. The executor service disables both, while dropping every Linux capability and running as a regular user. This is a real trade-off, described below.
 
-**A local app is still reachable from the web.** Without a `Host` check, a malicious page could use DNS rebinding to talk to an API on your machine. Nginx and the API accept only local names, and [tests](apps/api-lens/tests/integration/test_local_access.py) cover prompts sent from other origins without a CORS preflight.
+**A local app is still reachable from the web.** Without a `Host` check, a malicious page could use DNS rebinding to talk to an API on your machine. Nginx and the API accept only local names, and [tests](apps/api-lens/tests/integration/backend/test_local_access.py) cover prompts sent from other origins without a CORS preflight.
 
 ## Security and limitations
 
@@ -116,7 +116,7 @@ Set `AGENT_LENS_MODEL` to use another model. The [optional observability setup](
 
 Only needed to change the code. To run Agent Lens you need Docker, plus an API key for live runs.
 
-The API code has two services under [`apps/api-lens/src`](apps/api-lens/src): `backend` (HTTP API, saved captures and history) and `executor` (Codex process and folders). They meet only through `shared`. Tests keep these [boundaries](apps/api-lens/tests/unit/test_layers.py) and a limit of [30 lines per function](apps/api-lens/tests/unit/test_function_size.py), and Ruff allows two nested blocks at most.
+The API code has two services under [`apps/api-lens/src`](apps/api-lens/src): `backend` (HTTP API, saved captures and history) and `executor` (Codex process and folders). They meet only through `shared`. Tests keep these [boundaries](apps/api-lens/tests/architecture/test_layers.py) and a limit of [30 lines per function](apps/api-lens/tests/architecture/test_function_size.py), and Ruff allows two nested blocks at most.
 
 <details>
 <summary>Lint, type checks, tests and build</summary>

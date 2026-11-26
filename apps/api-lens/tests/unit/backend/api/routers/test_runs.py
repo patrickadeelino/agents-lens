@@ -7,13 +7,11 @@ from starlette.types import Message
 
 from src.backend.api.routers import runs
 from src.backend.api.routers.runs import RunStreamingResponse
-from src.backend.api.sse import RunSubscriptionResponse
 from src.backend.application.capture.capture_run import (
     CaptureResult,
     CaptureRun,
     FlushedRecord,
 )
-from src.backend.application.history.run_subscription import SubscriptionMessage
 from src.shared.observability import SseRecordDetails
 from src.shared.trace_events import TimedEvent, TraceEvent
 
@@ -70,25 +68,3 @@ def test_run_measures_flush_to_sse_after_asgi_send(monkeypatch: pytest.MonkeyPat
     run(RunStreamingResponse(Capture(stream())).stream_response(send))
 
     assert [details.flush_to_sse_us for details in logged] == [1_400]
-
-
-def test_subscription_closes_its_source_when_sending_a_keepalive_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    detached = False
-    monkeypatch.setattr(RunSubscriptionResponse, "_heartbeat_seconds", 0.0)
-
-    async def messages() -> AsyncGenerator[SubscriptionMessage]:
-        nonlocal detached
-        try:
-            yield None
-        finally:
-            detached = True
-
-    async def send(message: Message) -> None:
-        if message["type"] == "http.response.body":
-            assert message["body"] == b": keep-alive\n\n"
-            raise ConnectionResetError
-
-    with pytest.raises(ConnectionResetError):
-        run(RunSubscriptionResponse(messages()).stream_response(send))
-
-    assert detached
