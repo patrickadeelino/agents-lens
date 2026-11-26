@@ -1,7 +1,7 @@
 import json
 
-from src.application.capture import EventCapture
-from src.domain.trace_events import TimedEvent
+from src.backend.application.capture.capture import EventCapture
+from src.shared.trace_events import TimedEvent
 
 
 def test_each_line_is_timestamped_before_reading_the_next() -> None:

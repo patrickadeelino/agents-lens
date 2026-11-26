@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from executor import prepare_executor_dirs
+from src.executor.main import prepare_executor_dirs
 
 
 def test_clean_checkout_creates_only_private_executor_directories(tmp_path: Path) -> None:

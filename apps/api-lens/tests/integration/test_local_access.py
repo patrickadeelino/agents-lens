@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
-from src.api import dependencies
+from src.backend.api import dependencies
+from src.backend.main import app
 
 
 @pytest.fixture(autouse=True)

@@ -5,10 +5,10 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
-from src.api import dependencies
-from src.application.run_continuation import RunSession
-from src.infrastructure.capture_files import CaptureFiles
+from src.backend.api import dependencies
+from src.backend.application.conversation.run_continuation import RunSession
+from src.backend.infrastructure.storage.capture_files import CaptureFiles
+from src.backend.main import app
 
 
 def saved(root: Path, prompt: str, thread: str, when: datetime) -> CaptureFiles:

@@ -1,7 +1,7 @@
 import pytest
 
-from src.domain.trace_events import TraceEvent
-from src.domain.turn_outcome import agent_reply, turn_boundary, turn_status
+from src.backend.domain.turn.turn_outcome import agent_reply, turn_boundary, turn_status
+from src.shared.trace_events import TraceEvent
 
 
 @pytest.mark.parametrize(("boundary", "exit_code", "capture_failed", "status"), [

@@ -77,15 +77,15 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 ## Engineering notes
 
-**One event format, saved first.** The executor [translates App Server notifications](apps/api-lens/src/infrastructure/app_server.py) into the capture's own event format, leaving out the ones the trajectory does not use, such as the echo of the prompt. The API appends them to a JSONL file. The interface correlates updates by item ID, and live and saved turns go through the [same projection](apps/web/src/trajectoryProjection.js).
+**One event format, saved first.** The executor [translates App Server notifications](apps/api-lens/src/executor/codex/app_server.py) into the capture's own event format, leaving out the ones the trajectory does not use, such as the echo of the prompt. The API appends them to a JSONL file. The interface correlates updates by item ID, and live and saved turns go through the [same projection](apps/web/src/trajectoryProjection.js).
 
 **A tool's result is not the turn's result.** A turn can complete after a command fails. A command that never reports its end is shown as **Result unconfirmed** instead of being counted as a success or a failure. See the [command timeline](apps/web/src/timeline.js).
 
-**Disconnects do not stop the work.** The capture keeps recording if the browser goes away. The browser comes back with the ID of the last event it received and [reads from there](apps/api-lens/src/application/run_subscription.py). Integration tests cover [the disconnect](apps/api-lens/tests/integration/test_runs.py) and [the resume](apps/api-lens/tests/integration/test_run_history.py).
+**Disconnects do not stop the work.** The capture keeps recording if the browser goes away. The browser comes back with the ID of the last event it received and [reads from there](apps/api-lens/src/backend/application/history/run_subscription.py). Integration tests cover [the disconnect](apps/api-lens/tests/integration/test_runs.py) and [the resume](apps/api-lens/tests/integration/test_run_history.py).
 
-**Follow-ups stay on one thread.** A follow-up resumes the Codex thread of the latest run, and each run accepts [a single successor](apps/api-lens/src/infrastructure/capture_files.py), so two requests cannot fork a conversation. Token counts of a resumed turn exclude the earlier turns.
+**Follow-ups stay on one thread.** A follow-up resumes the Codex thread of the latest run, and each run accepts [a single successor](apps/api-lens/src/backend/infrastructure/storage/capture_files.py), so two requests cannot fork a conversation. Token counts of a resumed turn exclude the earlier turns.
 
-**Subagents arrive out of order.** A child's events can show up before the notification that links it to its parent. The executor [holds them briefly](apps/api-lens/src/infrastructure/app_server_delegation.py), within time, count and size limits, and marks a branch that never finished as an incomplete capture.
+**Subagents arrive out of order.** A child's events can show up before the notification that links it to its parent. The executor [holds them briefly](apps/api-lens/src/executor/codex/app_server_delegation.py), within time, count and size limits, and marks a branch that never finished as an incomplete capture.
 
 **Sandboxing inside Docker.** Codex isolates each command with Bubblewrap, which Docker's default profiles block: relaxing only seccomp or only AppArmor was not enough in testing. The executor service disables both, while dropping every Linux capability and running as a regular user. This is a real trade-off, described below.
 

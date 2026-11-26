@@ -12,10 +12,10 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from app import app
-from executor import app as executor_app
-from src.api.dependencies import CAPTURE_ROOT, PROJECT_DIR
-from src.observability import Telemetry
+from src.backend.api.dependencies import CAPTURE_ROOT, PROJECT_DIR
+from src.backend.main import app
+from src.executor.main import app as executor_app
+from src.shared.observability import Telemetry
 
 
 @pytest.fixture

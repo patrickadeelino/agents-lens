@@ -5,13 +5,17 @@ from contextlib import aclosing, asynccontextmanager
 import pytest
 from starlette.types import Message
 
-from src.api.routers import runs
-from src.api.routers.runs import RunStreamingResponse
-from src.api.sse import RunSubscriptionResponse
-from src.application.capture_run import CaptureResult, CaptureRun, FlushedRecord
-from src.application.run_subscription import SubscriptionMessage
-from src.domain.trace_events import TimedEvent, TraceEvent
-from src.observability import SseRecordDetails
+from src.backend.api.routers import runs
+from src.backend.api.routers.runs import RunStreamingResponse
+from src.backend.api.sse import RunSubscriptionResponse
+from src.backend.application.capture.capture_run import (
+    CaptureResult,
+    CaptureRun,
+    FlushedRecord,
+)
+from src.backend.application.history.run_subscription import SubscriptionMessage
+from src.shared.observability import SseRecordDetails
+from src.shared.trace_events import TimedEvent, TraceEvent
 
 
 class Capture(CaptureRun):

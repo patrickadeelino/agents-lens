@@ -1,15 +1,7 @@
 **
 !apps/api-lens/Dockerfile
 !apps/api-lens/Dockerfile.executor
-!apps/api-lens/executor.py
-!apps/api-lens/app.py
 !apps/api-lens/demo/*.json
-!apps/api-lens/src/__init__.py
-!apps/api-lens/src/observability.py
-!apps/api-lens/src/infrastructure/*.py
-!apps/api-lens/src/api/*.py
-!apps/api-lens/src/api/routers/*.py
-!apps/api-lens/src/application/*.py
-!apps/api-lens/src/domain/*.py
+!apps/api-lens/src/**/*.py
 !apps/api-lens/pyproject.toml
 !apps/api-lens/uv.lock

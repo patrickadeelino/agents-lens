@@ -4,11 +4,13 @@ from uuid import UUID
 
 import pytest
 
-from src.application.continue_conversation import ContinueConversation
-from src.application.prompt_rules import PromptRefused
-from src.application.run_continuation import RunSession
-from src.infrastructure.capture_files import CaptureFiles
-from src.infrastructure.conversation_store import ConversationStore
+from src.backend.application.conversation.continue_conversation import (
+    ContinueConversation,
+)
+from src.backend.application.conversation.prompt_rules import PromptRefused
+from src.backend.application.conversation.run_continuation import RunSession
+from src.backend.infrastructure.storage.capture_files import CaptureFiles
+from src.backend.infrastructure.storage.conversation_store import ConversationStore
 
 THREAD = UUID("11111111-1111-4111-8111-111111111111")
 

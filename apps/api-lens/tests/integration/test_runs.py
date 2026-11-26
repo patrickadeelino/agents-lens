@@ -24,16 +24,16 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import StatusCode
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-import executor
-from app import app
-from executor import app as executor_app
-from src.api import dependencies
-from src.application import capture_run
-from src.application.capture_run import FlushedRecord
-from src.domain.trace_events import TimedEvent
-from src.infrastructure import executor_client
-from src.infrastructure.capture_files import CaptureFiles
-from src.infrastructure.catalog_run import CatalogRun
+from src.backend.api import dependencies
+from src.backend.application.capture import capture_run
+from src.backend.application.capture.capture_run import FlushedRecord
+from src.backend.infrastructure import executor_client
+from src.backend.infrastructure.storage.capture_files import CaptureFiles
+from src.backend.main import app
+from src.executor import main as executor
+from src.executor.codex.catalog_run import CatalogRun
+from src.executor.main import app as executor_app
+from src.shared.trace_events import TimedEvent
 
 LITERAL_PROMPT = '  --help\nLeia o README "juniper" ☕.\n'
 PROBE = """

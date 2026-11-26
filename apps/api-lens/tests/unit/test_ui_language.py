@@ -13,7 +13,7 @@ PORTUGUESE = re.compile(
 
 def test_shipped_text_contains_no_portuguese() -> None:
     sources = [
-        PROJECT / "app.py", PROJECT / "executor.py", PROJECT / "demo" / "recordings.json",
+        PROJECT / "demo" / "recordings.json",
         *sorted((PROJECT / "src").rglob("*.py")),
     ]
     found = [

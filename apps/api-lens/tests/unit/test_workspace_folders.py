@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.infrastructure.workspace_folders import (
+from src.executor.workspace.workspace_folders import (
     FolderUnavailable,
     list_folders,
     resolve_folder,

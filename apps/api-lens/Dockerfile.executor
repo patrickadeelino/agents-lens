@@ -39,12 +39,9 @@ WORKDIR /app/apps/api-lens
 COPY apps/api-lens/pyproject.toml apps/api-lens/uv.lock ./
 RUN uv sync --locked --no-dev --no-cache
 
-COPY apps/api-lens/executor.py ./
-COPY apps/api-lens/src/__init__.py apps/api-lens/src/observability.py ./src/
-COPY apps/api-lens/src/api/ ./src/api/
-COPY apps/api-lens/src/application/ ./src/application/
-COPY apps/api-lens/src/domain/ ./src/domain/
-COPY apps/api-lens/src/infrastructure/ ./src/infrastructure/
+COPY apps/api-lens/src/__init__.py ./src/
+COPY apps/api-lens/src/shared/ ./src/shared/
+COPY apps/api-lens/src/executor/ ./src/executor/
 
 # The executor runs as the person's user ID, so it can edit the mounted folder.
 ARG AGENT_LENS_UID=1000
@@ -56,4 +53,4 @@ RUN install -d -m 0700 -o "$AGENT_LENS_UID" -g "$AGENT_LENS_GID" /executor-data 
 USER ${AGENT_LENS_UID}:${AGENT_LENS_GID}
 
 # The key arrives as a Compose secret and reaches the executor on standard input.
-CMD ["sh", "-c", "[ -s /run/secrets/codex_api_key ] || { echo 'Set CODEX_API_KEY in .env or your shell, then run docker compose up again.' >&2; exit 2; }; exec python -m executor --codex-bin /opt/codex/bin/codex --model \"$AGENT_LENS_MODEL\" --data-dir /executor-data --workspace-root /workspace < /run/secrets/codex_api_key"]
+CMD ["sh", "-c", "[ -s /run/secrets/codex_api_key ] || { echo 'Set CODEX_API_KEY in .env or your shell, then run docker compose up again.' >&2; exit 2; }; exec python -m src.executor.main --codex-bin /opt/codex/bin/codex --model \"$AGENT_LENS_MODEL\" --data-dir /executor-data --workspace-root /workspace < /run/secrets/codex_api_key"]

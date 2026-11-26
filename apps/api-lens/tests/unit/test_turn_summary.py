@@ -1,5 +1,5 @@
-from src.domain.trace_events import TimedEvent, TraceEvent
-from src.domain.turn_summary import TurnEvidence
+from src.backend.domain.turn.turn_summary import TurnEvidence
+from src.shared.trace_events import TimedEvent, TraceEvent
 
 
 def test_turn_summary_counts_unique_actions_and_links_observed_evidence() -> None:

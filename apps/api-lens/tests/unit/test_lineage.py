@@ -3,7 +3,11 @@ from typing import Self
 
 import pytest
 
-from src.domain.lineage import InvalidLineage, ancestors, descendants
+from src.backend.domain.conversation.lineage import (
+    InvalidLineage,
+    ancestors,
+    descendants,
+)
 
 
 @dataclass

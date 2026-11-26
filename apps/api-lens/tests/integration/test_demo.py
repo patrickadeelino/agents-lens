@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
-from src.api import dependencies
-from src.infrastructure.demo_data import load_demo
+from src.backend.api import dependencies
+from src.backend.infrastructure.demo_data import load_demo
+from src.backend.main import app
 
 
 @pytest.fixture

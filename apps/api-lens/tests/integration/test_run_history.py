@@ -6,10 +6,10 @@ from tempfile import TemporaryDirectory
 import pytest
 from fastapi.testclient import TestClient
 
-from app import app
-from src.api import dependencies
-from src.domain.trace_events import TimedEvent, TraceEvent
-from src.infrastructure.capture_files import CaptureFiles
+from src.backend.api import dependencies
+from src.backend.infrastructure.storage.capture_files import CaptureFiles
+from src.backend.main import app
+from src.shared.trace_events import TimedEvent, TraceEvent
 
 
 @pytest.fixture

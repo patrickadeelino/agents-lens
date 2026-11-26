@@ -4,15 +4,26 @@ from pathlib import Path
 import pytest
 
 SOURCES = Path(__file__).resolve().parents[2] / "src"
-OUTER_LAYERS = ("src.api", "src.infrastructure")
 
 
-@pytest.mark.parametrize("layer", ["domain", "application"])
-def test_inner_layers_do_not_import_outer_layers(layer: str) -> None:
-    imported = [
+def imported_modules(folder: str) -> list[tuple[str, str]]:
+    paths = list((SOURCES / folder).rglob("*.py"))
+    assert paths, folder
+    return [
         (path.name, node.module)
-        for path in (SOURCES / layer).glob("*.py")
+        for path in paths
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith(OUTER_LAYERS)
+        if isinstance(node, ast.ImportFrom) and node.module
     ]
-    assert imported == []
+
+
+@pytest.mark.parametrize(("folder", "forbidden"), [
+    ("backend/domain", ("src.backend.application", "src.backend.infrastructure", "src.backend.api")),
+    ("backend/application", ("src.backend.infrastructure", "src.backend.api")),
+    # The two services meet only through the shared package.
+    ("backend", ("src.executor",)),
+    ("executor", ("src.backend",)),
+    ("shared", ("src.backend", "src.executor")),
+])
+def test_imports_respect_service_and_layer_boundaries(folder: str, forbidden: tuple[str, ...]) -> None:
+    assert [found for found in imported_modules(folder) if found[1].startswith(forbidden)] == []
