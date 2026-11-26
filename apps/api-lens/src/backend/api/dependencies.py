@@ -4,13 +4,11 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-import httpx
 from fastapi import HTTPException
 from fastapi import Path as PathParam
 
@@ -20,14 +18,13 @@ from src.backend.application.capture.capture_run import CaptureRun
 from src.backend.application.conversation.continue_conversation import (
     ContinueConversation,
 )
-from src.backend.application.conversation.prompt_rules import (
-    PromptRefused,
-    Refusal,
-    create_run,
-    reject_while_running,
-    saved_workspace,
+from src.backend.application.conversation.prompt_rules import PromptRefused, Refusal
+from src.backend.application.conversation.start_conversation import (
+    FolderChoice,
+    FolderOfRun,
+    SelectedFolder,
+    StartConversation,
 )
-from src.backend.application.conversation.run_continuation import RunSession
 from src.backend.application.history.run_history import GetRunHistory
 from src.backend.application.history.run_subscription import SubscribeToRun
 from src.backend.infrastructure.executor_client import ExecutorClient
@@ -66,6 +63,8 @@ REFUSALS: dict[Refusal, tuple[int, str]] = {
     "workspace_rejected": (
         422, "This conversation's folder is unavailable or outside the workspace root. Restore the folder and try again.",
     ),
+    "folder_required": (422, "Select a folder to start the conversation."),
+    "selection_expired": (409, "Select the folder again."),
     "executor_unavailable": (503, "Executor unavailable."),
     "capture_unavailable": (503, "Capture directory is unavailable."),
 }
@@ -84,33 +83,27 @@ def conversation_store() -> ConversationStore:
     return ConversationStore(CAPTURE_ROOT)
 
 
+def executor_client() -> ExecutorClient:
+    return ExecutorClient(executor_socket())
+
+
+def requested_folder(request: NewPromptRequest) -> FolderChoice | None:
+    if request.workspace_id is not None:
+        return SelectedFolder(request.workspace_id)
+    if request.workspace_run_id is not None:
+        return FolderOfRun(request.workspace_run_id)
+    return None
+
+
 def get_prompt_capture(request: NewPromptRequest) -> PromptCapture:
-    store = conversation_store()
+    use_case = StartConversation(conversation_store(), executor_client)
     with refusals_as_http():
-        reject_while_running(store)
-        socket = executor_socket()
-        if request.workspace_id is not None:
-            workspace = selected_workspace(socket, request.workspace_id)
-        elif request.workspace_run_id is not None:
-            workspace = saved_workspace(store.find, request.workspace_run_id)
-            ExecutorClient(socket).check_workspace(workspace)
-        else:
-            raise HTTPException(status_code=422, detail="Select a folder to start the conversation.")
-        output = create_run(store, RunSession(prompt=request.prompt, submitted_at=datetime.now(UTC), workspace=workspace))
-    return prepare_capture(request.prompt, socket, output, workspace=workspace)
-
-
-def selected_workspace(socket: str, selection_id: UUID) -> str:
-    try:
-        return ExecutorClient(socket).workspace(selection_id)
-    except httpx.HTTPStatusError as error:
-        raise HTTPException(status_code=409, detail="Select the folder again.") from error
-    except (httpx.RequestError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="Executor unavailable.") from error
+        started = use_case.execute(request.prompt, requested_folder(request))
+    return prepare_capture(request.prompt, executor_socket(), started.run, workspace=started.workspace)
 
 
 def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> PromptCapture:
-    use_case = ContinueConversation(conversation_store(), lambda: ExecutorClient(executor_socket()))
+    use_case = ContinueConversation(conversation_store(), executor_client)
     with refusals_as_http():
         accepted = use_case.execute(run_id, request.prompt)
     return prepare_capture(

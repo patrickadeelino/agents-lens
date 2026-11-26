@@ -58,10 +58,14 @@ class ExecutorClient:
         response = self._workspace_request("POST", "/folders", timeout=5, payload={"path": path})
         return WorkspaceSelection.model_validate_json(response.content)
 
-    def workspace(self, selection_id: UUID) -> str:
-        return WorkspaceSelection.model_validate_json(
-            self._workspace_request("GET", f"/workspaces/{selection_id}", timeout=5).content,
-        ).path
+    def selected_folder(self, selection_id: UUID) -> str:
+        try:
+            response = self._workspace_request("GET", f"/workspaces/{selection_id}", timeout=5)
+            return WorkspaceSelection.model_validate_json(response.content).path
+        except httpx.HTTPStatusError as error:
+            raise PromptRefused("selection_expired") from error
+        except (httpx.RequestError, ValueError) as error:
+            raise PromptRefused("executor_unavailable") from error
 
     def _workspace_request(
         self, method: str, path: str, *, timeout: int, payload: dict[str, str] | None = None,

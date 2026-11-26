@@ -8,7 +8,7 @@ from src.shared.observability import event_log
 type Refusal = Literal[
     "executor_busy", "run_not_found", "run_unreadable", "not_continuable", "already_continued",
     "conversation_not_found", "history_unavailable", "folder_missing",
-    "workspace_rejected", "executor_unavailable", "capture_unavailable",
+    "workspace_rejected", "folder_required", "selection_expired", "executor_unavailable", "capture_unavailable",
 ]
 
 

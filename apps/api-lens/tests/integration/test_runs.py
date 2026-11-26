@@ -28,6 +28,7 @@ from src.backend.api import dependencies
 from src.backend.application.capture import capture_run
 from src.backend.application.capture.capture_run import FlushedRecord
 from src.backend.infrastructure import executor_client
+from src.backend.infrastructure.executor_client import ExecutorClient
 from src.backend.infrastructure.storage.capture_files import CaptureFiles
 from src.backend.main import app
 from src.executor import main as executor
@@ -779,7 +780,7 @@ def test_run_rejects_unavailable_capture_directory(
 ) -> None:
     backend, _ = live_http
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "unused.sock"))
-    monkeypatch.setattr(dependencies, "selected_workspace", lambda *_: str(run_workspace / "example"))
+    monkeypatch.setattr(ExecutorClient, "selected_folder", lambda *_: str(run_workspace / "example"))
     (run_workspace / "captures").touch()
     response = backend.post("/runs", json=prompt_body("Read the example."))
 
@@ -960,7 +961,7 @@ def test_run_keeps_observed_records_and_rejects_invalid_executor_streams(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
     tail: tuple[dict[str, object], ...],
 ) -> None:
-    monkeypatch.setattr(dependencies, "selected_workspace", lambda *_: str(run_workspace / "example"))
+    monkeypatch.setattr(ExecutorClient, "selected_folder", lambda *_: str(run_workspace / "example"))
     invalid_executor = FastAPI()
     event = {"type": "turn.started"}
 
@@ -993,7 +994,7 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(dependencies, "selected_workspace", lambda *_: str(run_workspace / "example"))
+    monkeypatch.setattr(ExecutorClient, "selected_folder", lambda *_: str(run_workspace / "example"))
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "missing.sock"))
     backend, _ = live_http
 
