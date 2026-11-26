@@ -33,6 +33,7 @@ from src.backend.main import app
 from src.executor import main as executor
 from src.executor.codex.catalog_run import CatalogRun
 from src.executor.main import app as executor_app
+from src.executor.process import codex_process
 from src.shared.trace_events import TimedEvent
 
 LITERAL_PROMPT = '  --help\nLeia o README "juniper" ☕.\n'
@@ -1269,7 +1270,7 @@ def assert_command_span(
 def test_run_preserves_trace_when_a_line_exceeds_the_limit(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(executor, "MAX_EVENT_BYTES", 32 * 1024)
+    monkeypatch.setattr(codex_process, "MAX_EVENT_BYTES", 32 * 1024)
     backend, _ = live_http
 
     with backend.stream("POST", "/runs", json=prompt_body("emit a big record")) as response:

@@ -2,25 +2,18 @@
 
 import argparse
 import asyncio
-import json
 import sys
 from collections.abc import AsyncGenerator
-from contextlib import aclosing, suppress
+from contextlib import aclosing
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from uuid import UUID, uuid4
 
 import uvicorn
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
-from opentelemetry.trace import Span
 
-from src.executor.codex.app_server import (
-    AppServerError,
-    AppServerRejected,
-    AppServerTurn,
-)
 from src.executor.codex.catalog_run import CatalogRun, ExecutorConfig
+from src.executor.process.execution import execution_messages
 from src.executor.workspace.workspace_folders import (
     FolderUnavailable,
     list_folders,
@@ -30,23 +23,14 @@ from src.shared.executor_protocol import (
     ExecutorRequest,
     FolderListing,
     FolderRequest,
-    RunError,
     RunExit,
     RunOutput,
     WorkspaceCheck,
     WorkspaceSelection,
 )
-from src.shared.observability import (
-    EventProgress,
-    event_log,
-    exit_outcome,
-    finish_span,
-    operation_span,
-)
+from src.shared.observability import event_log, operation_span
 from src.shared.observed_app import observed_app
 from src.shared.streaming import ClosingStreamingResponse
-
-MAX_EVENT_BYTES = 8 * 1024 * 1024
 
 app = observed_app(
     "Agent Lens Executor", "agent-lens-executor", {("POST", "/run"): "executor.http"}, private=True,
@@ -142,99 +126,13 @@ async def stream_process(run: CatalogRun, request: ExecutorRequest) -> AsyncGene
     async with execution_lock:
         with operation_span("codex.subprocess") as span:
             first_event_sent = False
-            async with aclosing(subprocess_messages(run, request, span)) as messages:
+            async with aclosing(execution_messages(run, request, span)) as messages:
                 async for message in messages:
                     yield message.model_dump_json() + "\n"
                     # The iterator resumes after ASGI accepts the response body.
                     if not first_event_sent and isinstance(message, RunOutput):
                         span.add_event("executor.stream.first_event_sent")
                         first_event_sent = True
-
-
-async def stop_process(process: asyncio.subprocess.Process, stdout: asyncio.StreamReader) -> None:
-    try:
-        async with asyncio.timeout(2):
-            await drain_process(process, stdout)
-        return
-    except TimeoutError:
-        pass
-    if process.returncode is None:
-        with suppress(ProcessLookupError):
-            process.kill()
-    await drain_process(process, stdout)
-
-
-async def drain_process(process: asyncio.subprocess.Process, stdout: asyncio.StreamReader) -> None:
-    # Drain the paused pipe before waiting for its transport to close.
-    while await stdout.read(64 * 1024):
-        pass
-    await process.wait()
-
-
-async def subprocess_messages(
-    run: CatalogRun, request: ExecutorRequest, span: Span,
-) -> AsyncGenerator[RunOutput | RunExit | RunError]:
-    # Codex's sandbox helper requires a short, user-owned socket directory with mode 0700.
-    with TemporaryDirectory(prefix="lens-codex-", dir="/tmp") as runtime_dir:
-        async with aclosing(app_server_messages(run, request, span, runtime_dir)) as messages:
-            async for message in messages:
-                yield message
-
-
-async def app_server_messages(
-    run: CatalogRun, request: ExecutorRequest, span: Span, runtime_dir: str,
-) -> AsyncGenerator[RunOutput | RunExit | RunError]:
-    progress = EventProgress("executor.subprocess.first_event_read", "subprocess")
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *run.command(),
-            cwd=run.workspace,
-            env={**run.environment(), "TMPDIR": runtime_dir, "XDG_RUNTIME_DIR": runtime_dir},
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-            limit=MAX_EVENT_BYTES,
-        )
-    except OSError:
-        finish_span(span, "failed", error_code="subprocess_start_failed")
-        event_log(
-            "executor.subprocess.failed", "subprocess", "failed",
-            error_code="subprocess_start_failed", started_at=progress.started_at, event_count=progress.count,
-        )
-        yield RunExit(exit_code=None)
-        return
-
-    assert process.stdout is not None and process.stdin is not None
-    event_log("executor.subprocess.started", "subprocess", "started")
-    turn = AppServerTurn(process.stdin, process.stdout)
-    secret = json.dumps(run.api_key)[1:-1]
-    try:
-        async for event in turn.events(run, request):
-            progress.advance(span)
-            stdout = json.dumps(event, ensure_ascii=False).replace(secret, "[REDACTED]")
-            yield RunOutput(stdout=stdout)
-        exit_code = turn.exit_code
-        outcome, code = exit_outcome(exit_code)
-        finish_span(span, outcome, error_code=code)
-        event_log(
-            f"executor.subprocess.{outcome}", "subprocess", outcome,
-            error_code=code, started_at=progress.started_at, exit_code=exit_code, event_count=progress.count,
-        )
-        yield RunExit(exit_code=exit_code)
-    except asyncio.LimitOverrunError:
-        finish_span(span, "failed", error_code="event_too_large")
-        yield RunError(error="event_too_large")
-    except AppServerRejected:
-        finish_span(span, "failed", error_code="app_server_request_rejected")
-        event_log("executor.subprocess.failed", "subprocess", "failed", error_code="app_server_request_rejected")
-        yield RunExit(exit_code=1)
-    except (AppServerError, OSError, EOFError, TimeoutError, ValueError, KeyError, TypeError, AttributeError):
-        finish_span(span, "failed", error_code="app_server_disconnected")
-        event_log("executor.subprocess.failed", "subprocess", "failed", error_code="app_server_disconnected")
-        yield RunExit(exit_code=None)
-    finally:
-        process.stdin.close()
-        await asyncio.shield(stop_process(process, process.stdout))
 
 
 @app.post("/run", response_class=StreamingResponse)
