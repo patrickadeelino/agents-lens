@@ -8,7 +8,7 @@ from src.shared.executor_protocol import ExecutorRequest
 
 RUN = ClaudeRun(
     binary=Path("/opt/claude"), state_dir=Path("/data/state"), model="haiku", api_key="test-key",
-    workspace=Path("/workspace/project"),
+    workspace_root=Path("/workspace"), workspace=Path("/workspace/project"),
 )
 REQUEST = ExecutorRequest(workspace="/workspace/project", prompt="Secret prompt")
 
@@ -31,14 +31,25 @@ def test_a_continuation_resumes_the_session() -> None:
     assert option(command, "--resume") == str(UUID(int=7))
 
 
-def test_nothing_runs_outside_the_sandbox_and_private_folders_are_unreadable() -> None:
+def test_nothing_runs_outside_the_sandbox() -> None:
     command = RUN.command(REQUEST)
     settings = json.loads(option(command, "--settings"))
     sandbox = settings["sandbox"]
     assert (sandbox["enabled"], sandbox["failIfUnavailable"], sandbox["allowUnsandboxedCommands"]) == (True, True, False)
-    assert sandbox["filesystem"]["denyRead"] == ["/data/state", "/data/ipc"]
-    assert settings["permissions"]["deny"] == ["Read(//data/state/**)", "Read(//data/ipc/**)"]
     assert option(command, "--permission-mode") == "dontAsk"
+
+
+def test_commands_read_only_the_chosen_folder_of_the_workspace_root_and_nothing_private() -> None:
+    settings = json.loads(option(RUN.command(REQUEST), "--settings"))
+    assert settings["sandbox"]["filesystem"] == {
+        "denyRead": ["/workspace", "/data", "/run/secrets"], "allowRead": ["/workspace/project"],
+    }
+    assert settings["permissions"]["deny"] == ["Read(//data/**)", "Read(//run/secrets/**)"]
+
+
+def test_commands_do_not_receive_the_api_key() -> None:
+    settings = json.loads(option(RUN.command(REQUEST), "--settings"))
+    assert settings["sandbox"]["credentials"] == {"envVars": [{"name": "ANTHROPIC_API_KEY", "mode": "deny"}]}
 
 
 def test_the_process_receives_only_what_it_needs(monkeypatch) -> None:

@@ -11,6 +11,9 @@ from src.shared.executor_protocol import ExecutorRequest
 TOOLS = "Bash,Read,Edit,Write,Glob,Grep,Agent"
 # Edit rules cover every tool that changes files.
 ALLOWED = ("Bash", "Edit(./**)")
+# Where the container mounts the keys of every agent.
+SECRETS_DIR = Path("/run/secrets")
+KEY_VARIABLE = "ANTHROPIC_API_KEY"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -19,6 +22,7 @@ class ClaudeRun:
     state_dir: Path
     model: str
     api_key: str = field(repr=False)
+    workspace_root: Path
     workspace: Path
 
     def command(self, request: ExecutorRequest) -> tuple[str, ...]:
@@ -30,14 +34,23 @@ class ClaudeRun:
         )
 
     def settings(self) -> Json:
-        """The sandbox covers only Bash; permission rules cover the other tools."""
-        private = (self.state_dir, self.state_dir.parent / "ipc")
+        """The sandbox covers only Bash; permission rules cover the other tools.
+
+        By default Bash reads the whole filesystem, so everything private is denied and only the chosen folder
+        is opened again inside the workspace root. The narrower path wins.
+        """
+        private = (self.state_dir.parent, SECRETS_DIR)
         return {
             "sandbox": {
                 "enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
                 # Needed inside an unprivileged container, where /proc cannot be mounted again.
                 "enableWeakerNestedSandbox": True,
-                "filesystem": {"denyRead": [str(path) for path in private]},
+                "filesystem": {
+                    "denyRead": [str(path) for path in (self.workspace_root, *private)],
+                    "allowRead": [str(self.workspace)],
+                },
+                # Claude Code itself needs the key; the commands it runs do not.
+                "credentials": {"envVars": [{"name": KEY_VARIABLE, "mode": "deny"}]},
             },
             "permissions": {"deny": [f"Read(/{path}/**)" for path in private]},
         }
@@ -47,5 +60,5 @@ class ClaudeRun:
             "PATH": os.environ["PATH"],
             "LANG": "C.UTF-8",
             "HOME": str(self.state_dir),
-            "ANTHROPIC_API_KEY": self.api_key,
+            KEY_VARIABLE: self.api_key,
         }
