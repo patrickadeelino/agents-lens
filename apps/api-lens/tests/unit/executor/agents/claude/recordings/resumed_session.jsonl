@@ -1,0 +1,3 @@
+{"type": "system", "session_id": "00000000-0000-4000-8000-000000000001", "subtype": "init"}
+{"type": "assistant", "session_id": "00000000-0000-4000-8000-000000000001", "parent_tool_use_id": null, "message": {"id": "msg_dsf1nd", "content": [{"type": "text", "text": "7"}]}}
+{"type": "result", "session_id": "00000000-0000-4000-8000-000000000001", "subtype": "success", "is_error": false, "terminal_reason": "completed", "result": "7", "usage": {"input_tokens": 2, "output_tokens": 3, "cache_read_input_tokens": 12396, "cache_creation_input_tokens": 118, "output_tokens_details": {"thinking_tokens": 0}}}

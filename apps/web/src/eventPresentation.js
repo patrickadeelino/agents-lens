@@ -227,6 +227,14 @@ export function describeTool({ event }, previous) {
         output: item.result,
       };
       break;
+    case "tool_call":
+      fields = {
+        name: item.tool,
+        input: item.arguments,
+        preview: item.arguments?.file_path ?? item.arguments?.pattern,
+        output: item.result,
+      };
+      break;
     case "web_search":
       fields = {
         name: t.tools.webSearch,

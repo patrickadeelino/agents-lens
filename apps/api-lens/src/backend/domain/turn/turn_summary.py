@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 from src.backend.domain.turn.command_execution import CommandItem
 from src.shared.trace_events import TimedEvent
 
-_TOOLS = {"command_execution", "file_change", "mcp_tool_call", "web_search", "collab_tool_call"}
+_TOOLS = {
+    "command_execution", "file_change", "mcp_tool_call", "web_search", "collab_tool_call", "tool_call",
+}
 _FAILED = {"failed", "declined"}
 _TEST = re.compile(r"^(?:(?:rtk(?: proxy)?|uv run)\s+)*(?:pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))(?:\s|$)")
 
