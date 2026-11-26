@@ -114,6 +114,7 @@ def test_opening_by_thread_reads_each_result_once(tmp_path: Path, monkeypatch) -
 
     monkeypatch.setattr(CaptureFiles, "read_result", counted)
     with TestClient(app, base_url="http://localhost") as client:
+        reads.clear()  # Startup recovery reads the results too.
         assert client.get(f"/threads/{thread}").status_code == 200
     # One pass to find the thread and one to load its details.
     assert sorted(reads) == sorted([first.run_id, second.run_id] * 2)

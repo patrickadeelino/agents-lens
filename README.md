@@ -101,7 +101,7 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 - The API key is passed to the executor as a Compose secret and masked if it appears in an event. A `.env` file keeps it in plain text on disk.
 - Prompts, command output and captures are stored unencrypted. Review them before sharing screenshots or recordings.
 - The executor handles one turn at a time. While a turn runs, the interface keeps sending disabled and the API refuses new prompts. If two prompts arrive at the same instant, the executor rejects one, which is saved as a failed turn that can be retried. A tab that was already open learns about the running turn when it gets the focus or tries to send.
-- **Restarting the API during a turn leaves that conversation unable to continue.** The saved turns stay available.
+- A turn interrupted by an API restart is marked as unconfirmed when the API starts again, and the conversation can be continued unless it was its first turn. This assumes a single API process.
 - A turn fails if the executor sends nothing for 120 seconds.
 - An event larger than 8 MiB ends the capture, keeping what was already saved.
 - Tested on Linux x86_64 with kernel 5.15, Codex **0.171.0** and `gpt-6.2-sol`. macOS, Windows and ARM have not been tested. On Ubuntu 23.10 or later, the host may restrict the user namespaces the sandbox needs.

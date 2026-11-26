@@ -32,12 +32,10 @@ class ConversationStore:
 
     def roots(self) -> tuple[list[CaptureFiles], int]:
         """Return the readable first runs and how many unreadable runs no conversation links to."""
-        if not self.root.exists():
-            return [], 0
         roots: list[CaptureFiles] = []
         unreadable: set[str] = set()
         linked: set[str] = set()
-        for capture in self._prompt_captures():
+        for capture in self.saved_runs():
             if name := readable_successor(capture):
                 linked.add(name)
             try:
@@ -50,7 +48,10 @@ class ConversationStore:
         # A linked run is counted once, through the conversation that fails to read it.
         return roots, len(unreadable - linked)
 
-    def _prompt_captures(self) -> Iterator[CaptureFiles]:
+    def saved_runs(self) -> Iterator[CaptureFiles]:
+        """Yield every prompt capture, readable or not."""
+        if not self.root.exists():
+            return
         for path in self.root.iterdir():
             if not path.is_symlink() and path.is_dir() and path.name.startswith("codex-prompt-"):
                 yield CaptureFiles(path)

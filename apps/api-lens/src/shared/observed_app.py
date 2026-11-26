@@ -1,7 +1,7 @@
 """Observe selected ASGI requests through the end of the response body."""
 
 from asyncio import CancelledError, to_thread
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from time import monotonic
@@ -86,14 +86,24 @@ class ObserveHTTP:
             event_log(f"{prefix}.{outcome}", "http", outcome, error_code=error_code, started_at=started_at)
 
 
+def run_preparation(telemetry: Telemetry, prepare: Callable[[], None] | None) -> None:
+    """Run what a service needs before its first request, with its events logged."""
+    if prepare is None:
+        return
+    with observe_operation(telemetry):
+        prepare()
+
+
 def observed_app(
     title: str, service: str, routes: dict[tuple[str, str], str], *, private: bool = False,
+    prepare: Callable[[], None] | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         telemetry: Telemetry = app.state.telemetry
         telemetry.configure()
         try:
+            run_preparation(telemetry, prepare)
             yield
         finally:
             await to_thread(telemetry.shutdown)
