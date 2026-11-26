@@ -672,7 +672,7 @@ def test_a_continuation_rejected_by_a_busy_executor_can_be_retried(
     backend, _ = live_http
     first_id = backend.post("/runs", json=prompt_body("save marker: niobium")).headers["X-Run-ID"]
     # Both prompts can pass the backend check at once; the executor then rejects the second.
-    monkeypatch.setattr(dependencies, "reject_while_running", lambda: None)
+    monkeypatch.setattr(CaptureFiles, "any_active", lambda root: False)
     with backend.stream("POST", "/runs", json=prompt_body(LITERAL_PROMPT)) as other:
         frames = other.iter_lines()
         next_frame(frames)

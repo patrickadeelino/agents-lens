@@ -12,6 +12,7 @@ from src.application.capture_run import (
     ExecutorRequestFailed,
     StdoutConsumer,
 )
+from src.application.prompt_rules import PromptRefused, Refusal
 from src.observability import (
     EventProgress,
     event_log,
@@ -42,7 +43,13 @@ class ExecutorClient:
         self._workspace_request("GET", "/ready", timeout=2)
 
     def check_workspace(self, workspace: str) -> None:
-        self._workspace_request("POST", "/workspace-check", timeout=2, payload={"workspace": workspace})
+        try:
+            self._workspace_request("POST", "/workspace-check", timeout=2, payload={"workspace": workspace})
+        except httpx.HTTPStatusError as error:
+            refusal: Refusal = "workspace_rejected" if error.response.status_code == 409 else "executor_unavailable"
+            raise PromptRefused(refusal) from error
+        except httpx.RequestError as error:
+            raise PromptRefused("executor_unavailable") from error
 
     def list_folders(self, path: str) -> FolderListing:
         response = self._workspace_request("GET", "/folders", timeout=5, params={"path": path})

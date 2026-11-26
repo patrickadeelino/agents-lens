@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
 
+from src.application.run_continuation import RunSession
 from src.infrastructure.capture_files import CaptureFiles
 
 
@@ -13,6 +14,14 @@ class ConversationStore:
 
     def find(self, run_id: str) -> CaptureFiles:
         return CaptureFiles.find(self.root, run_id)
+
+    def create(self, session: RunSession) -> CaptureFiles:
+        capture = CaptureFiles.create(self.root, prefix="codex-prompt-")
+        capture.write_session(session)
+        return capture
+
+    def any_active(self) -> bool:
+        return CaptureFiles.any_active(self.root)
 
     def roots(self) -> tuple[list[CaptureFiles], int]:
         """Return the readable first runs and how many unreadable runs no conversation links to."""

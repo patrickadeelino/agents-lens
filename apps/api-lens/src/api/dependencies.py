@@ -1,6 +1,8 @@
 """Build the services used by the HTTP routes."""
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -14,12 +16,15 @@ from fastapi import Path as PathParam
 
 from src.application.capture import EventCapture
 from src.application.capture_run import CaptureRun
-from src.application.conversations import Conversations
-from src.application.run_continuation import (
-    RunSession,
-    conversation_thread,
-    describe_continuation,
+from src.application.continue_conversation import ContinueConversation
+from src.application.prompt_rules import (
+    PromptRefused,
+    Refusal,
+    create_run,
+    reject_while_running,
+    saved_workspace,
 )
+from src.application.run_continuation import RunSession
 from src.application.run_history import GetRunHistory
 from src.application.run_subscription import SubscribeToRun
 from src.infrastructure.capture_files import CaptureFiles
@@ -48,38 +53,50 @@ class PromptCapture:
     capture: CaptureRun
 
 
-def reject_while_running() -> None:
-    """Refuse a prompt before saving it while the single executor is running another one."""
-    # Not atomic: two simultaneous prompts can pass, and the executor still rejects the second.
-    if CaptureFiles.any_active(CAPTURE_ROOT):
-        event_log("run.rejected", "api", "rejected", error_code="executor_busy")
-        raise HTTPException(status_code=409, detail="executor_busy")
+REFUSALS: dict[Refusal, tuple[int, str]] = {
+    "executor_busy": (409, "executor_busy"),
+    "run_not_found": (404, "Run was not found."),
+    "run_unreadable": (503, "Run capture is unavailable."),
+    "not_continuable": (409, "This run cannot be continued."),
+    "already_continued": (409, "Open the latest run to continue this conversation."),
+    "conversation_not_found": (404, "Conversation was not found."),
+    "history_unavailable": (503, "History is unavailable."),
+    "folder_missing": (409, "Select the folder to start a new conversation."),
+    "workspace_rejected": (
+        422, "This conversation's folder is unavailable or outside the workspace root. Restore the folder and try again.",
+    ),
+    "executor_unavailable": (503, "Executor unavailable."),
+    "capture_unavailable": (503, "Capture directory is unavailable."),
+}
+
+
+@contextmanager
+def refusals_as_http() -> Iterator[None]:
+    try:
+        yield
+    except PromptRefused as error:
+        status, detail = REFUSALS[error.refusal]
+        raise HTTPException(status_code=status, detail=error.reason or detail) from error
+
+
+def conversation_store() -> ConversationStore:
+    return ConversationStore(CAPTURE_ROOT)
 
 
 def get_prompt_capture(request: NewPromptRequest) -> PromptCapture:
-    reject_while_running()
-    socket = executor_socket()
-    if request.workspace_id is not None:
-        workspace = selected_workspace(socket, request.workspace_id)
-    elif request.workspace_run_id is not None:
-        workspace = saved_workspace(request.workspace_run_id)
-        check_resume_workspace(socket, workspace)
-    else:
-        raise HTTPException(status_code=422, detail="Select a folder to start the conversation.")
-    output = create_capture(request.prompt, workspace=workspace)
+    store = conversation_store()
+    with refusals_as_http():
+        reject_while_running(store)
+        socket = executor_socket()
+        if request.workspace_id is not None:
+            workspace = selected_workspace(socket, request.workspace_id)
+        elif request.workspace_run_id is not None:
+            workspace = saved_workspace(store.find, request.workspace_run_id)
+            ExecutorClient(socket).check_workspace(workspace)
+        else:
+            raise HTTPException(status_code=422, detail="Select a folder to start the conversation.")
+        output = create_run(store, RunSession(prompt=request.prompt, submitted_at=datetime.now(UTC), workspace=workspace))
     return prepare_capture(request.prompt, socket, output, workspace=workspace)
-
-
-def saved_workspace(run_id: str) -> str:
-    try:
-        session = CaptureFiles.find(CAPTURE_ROOT, run_id).read_session()
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail="Conversation was not found.") from error
-    except (OSError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="History is unavailable.") from error
-    if session is None:
-        raise HTTPException(status_code=409, detail="Select the folder to start a new conversation.")
-    return session.workspace
 
 
 def selected_workspace(socket: str, selection_id: UUID) -> str:
@@ -92,54 +109,12 @@ def selected_workspace(socket: str, selection_id: UUID) -> str:
 
 
 def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> PromptCapture:
-    reject_while_running()
-    origin, thread_id = resumable_capture(run_id)
-    socket = executor_socket()
-    workspace = saved_workspace(run_id)
-    check_resume_workspace(socket, workspace)
-    output = create_capture(request.prompt, previous_run_id=run_id, workspace=workspace)
-    try:
-        origin.reserve_successor(output)
-    except FileExistsError as error:
-        output.discard_unpublished()
-        raise HTTPException(status_code=409, detail="Open the latest run to continue this conversation.") from error
-    except OSError as error:
-        output.discard_unpublished()
-        raise HTTPException(status_code=503, detail="Capture directory is unavailable.") from error
-    return prepare_capture(request.prompt, socket, output, thread_id=thread_id, workspace=workspace)
-
-
-def check_resume_workspace(socket: str, workspace: str) -> None:
-    try:
-        ExecutorClient(socket).check_workspace(workspace)
-    except httpx.HTTPStatusError as error:
-        if error.response.status_code == 409:
-            raise HTTPException(
-                status_code=422, detail="This conversation's folder is unavailable or outside the workspace root. Restore the folder and try again.",
-            ) from error
-        raise HTTPException(status_code=503, detail="Executor unavailable.") from error
-    except httpx.RequestError as error:
-        raise HTTPException(status_code=503, detail="Executor unavailable.") from error
-
-
-def resumable_capture(run_id: str) -> tuple[CaptureFiles, UUID]:
-    try:
-        origin = CaptureFiles.find(CAPTURE_ROOT, run_id)
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=404, detail="Run was not found.") from error
-    except OSError as error:
-        raise HTTPException(status_code=503, detail="Run capture is unavailable.") from error
-    try:
-        result = origin.read_result()
-        projection = Conversations(ConversationStore(CAPTURE_ROOT))
-        projection.by_run(run_id)
-        continuation = describe_continuation(run_id, origin, result)
-        thread_id = conversation_thread(origin) if continuation.state == "available" else None
-    except (OSError, ValueError) as error:
-        raise HTTPException(status_code=503, detail="Run capture is unavailable.") from error
-    if thread_id is None:
-        raise HTTPException(status_code=409, detail=continuation.reason or "This run cannot be continued.")
-    return origin, thread_id
+    use_case = ContinueConversation(conversation_store(), lambda: ExecutorClient(executor_socket()))
+    with refusals_as_http():
+        accepted = use_case.execute(run_id, request.prompt)
+    return prepare_capture(
+        request.prompt, executor_socket(), accepted.run, thread_id=accepted.thread_id, workspace=accepted.workspace,
+    )
 
 
 def executor_socket() -> str:
@@ -148,21 +123,6 @@ def executor_socket() -> str:
         event_log("run.rejected", "api", "rejected", error_code="executor_unconfigured")
         raise HTTPException(status_code=503, detail="Executor socket is not configured.")
     return socket
-
-
-def create_capture(
-    prompt: str, *, workspace: str, previous_run_id: str | None = None,
-) -> CaptureFiles:
-    try:
-        output = CaptureFiles.create(CAPTURE_ROOT, prefix="codex-prompt-")
-        output.write_session(RunSession(
-            previous_run_id=previous_run_id, prompt=prompt,
-            submitted_at=datetime.now(UTC), workspace=workspace,
-        ))
-    except OSError as error:
-        event_log("run.rejected", "api", "rejected", error_code="capture_unavailable")
-        raise HTTPException(status_code=503, detail="Capture directory is unavailable.") from error
-    return output
 
 
 def prepare_capture(
