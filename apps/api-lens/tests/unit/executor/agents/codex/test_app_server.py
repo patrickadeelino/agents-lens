@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from src.executor.codex.app_server import AppServerError, AppServerTurn
+from src.executor.agents.codex.app_server import AppServerError, AppServerTurn
 
 
 class ScriptedTurn(AppServerTurn):

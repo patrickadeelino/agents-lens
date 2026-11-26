@@ -6,20 +6,21 @@ import re
 from collections import deque
 from collections.abc import AsyncIterator, Iterator
 
-from src.executor.codex.app_server_delegation import (
+from src.executor.agents.base import AgentError, AgentRejected
+from src.executor.agents.codex.app_server_delegation import (
     DelegationCapture,
     Json,
     Notification,
 )
-from src.executor.codex.catalog_run import PROFILE, CatalogRun
+from src.executor.agents.codex.catalog_run import PROFILE, CatalogRun
 from src.shared.executor_protocol import ExecutorRequest
 
 
-class AppServerError(Exception):
+class AppServerError(AgentError):
     """The subprocess did not complete the expected protocol exchange."""
 
 
-class AppServerRejected(AppServerError):
+class AppServerRejected(AppServerError, AgentRejected):
     """The server explicitly rejected a request."""
 
 

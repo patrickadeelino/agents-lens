@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.shared.executor_protocol import ExecutorRequest
+
 PROFILE = "agent-lens-catalog"
 
 
@@ -21,7 +23,7 @@ class ExecutorConfig:
 class CatalogRun(ExecutorConfig):
     workspace: Path
 
-    def command(self) -> tuple[str, ...]:
+    def command(self, request: ExecutorRequest) -> tuple[str, ...]:
         workspace = json.dumps(str(self.workspace), ensure_ascii=False)
         binary = json.dumps(str(self.binary))
         filesystem = f'{{":root" = "deny", ":minimal" = "read", {workspace} = "write", {binary} = "read"}}'

@@ -9,8 +9,8 @@ import pytest
 from fastapi import FastAPI, Response
 
 from src.backend.infrastructure.executor_client import ExecutorClient
-from src.executor.codex.catalog_run import CatalogRun
-from src.executor.process import codex_process
+from src.executor.agents.codex.catalog_run import CatalogRun
+from src.executor.process import agent_process
 from src.shared.trace_events import TimedEvent
 from tests.integration.end_to_end.support import (
     capture_directory,
@@ -135,7 +135,7 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
 def test_run_preserves_trace_when_a_line_exceeds_the_limit(
     live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(codex_process, "MAX_EVENT_BYTES", 32 * 1024)
+    monkeypatch.setattr(agent_process, "MAX_EVENT_BYTES", 32 * 1024)
     backend, _ = live_http
 
     with backend.stream("POST", "/runs", json=prompt_body("emit a big record")) as response:

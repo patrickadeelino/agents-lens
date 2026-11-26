@@ -13,7 +13,9 @@ from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
 from opentelemetry.trace import Span
 
-from src.executor.codex.catalog_run import CatalogRun, ExecutorConfig
+from src.executor.agents.base import AgentAdapter, AgentRun
+from src.executor.agents.codex.adapter import CodexAdapter
+from src.executor.agents.codex.catalog_run import CatalogRun, ExecutorConfig
 from src.executor.process.execution import ExecutionMessage, execution_messages
 from src.executor.workspace.workspace_folders import (
     FolderUnavailable,
@@ -33,6 +35,8 @@ from src.shared.executor_protocol import (
 from src.shared.observability import event_log, operation_span
 from src.shared.observed_app import observed_app
 from src.shared.streaming import ClosingStreamingResponse
+
+CODEX = CodexAdapter()
 
 app = observed_app(
     "Agent Lens Executor", "agent-lens-executor", {("POST", "/run"): "executor.http"}, private=True,
@@ -131,21 +135,23 @@ class FirstEventMark:
 
 @asynccontextmanager
 async def traced_execution(
-    run: CatalogRun, request: ExecutorRequest,
+    adapter: AgentAdapter, run: AgentRun, request: ExecutorRequest,
 ) -> AsyncIterator[tuple[Span, AsyncGenerator[ExecutionMessage]]]:
     """Open the execution span and its messages; the messages close before the span ends."""
     with operation_span("codex.subprocess") as span:
-        async with aclosing(execution_messages(run, request, span)) as messages:
+        async with aclosing(execution_messages(adapter, run, request, span)) as messages:
             yield span, messages
 
 
-async def stream_process(run: CatalogRun, request: ExecutorRequest) -> AsyncGenerator[str]:
+async def stream_process(
+    run: AgentRun, request: ExecutorRequest, adapter: AgentAdapter = CODEX,
+) -> AsyncGenerator[str]:
     if execution_lock.locked():
         event_log("executor.rejected", "executor", "rejected", error_code="executor_busy")
         yield RunExit(exit_code=None).model_dump_json() + "\n"
         return
 
-    async with execution_lock, traced_execution(run, request) as (span, messages):
+    async with execution_lock, traced_execution(adapter, run, request) as (span, messages):
         first_event = FirstEventMark(span)
         async for message in messages:
             yield message.model_dump_json() + "\n"

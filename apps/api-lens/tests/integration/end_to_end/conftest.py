@@ -12,7 +12,7 @@ import pytest
 from src.backend.api import dependencies
 from src.backend.main import app
 from src.executor import main as executor
-from src.executor.codex.catalog_run import CatalogRun
+from src.executor.agents.codex.catalog_run import CatalogRun
 from src.executor.main import app as executor_app
 from src.executor.workspace.workspace_selections import WorkspaceSelections
 from tests.integration.end_to_end.fake_codex import PROBE

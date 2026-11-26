@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.executor.codex.catalog_run import CatalogRun
+from src.executor.agents.codex.catalog_run import CatalogRun
 from src.executor.main import execution_lock, stream_process
 from src.shared.executor_protocol import ExecutorRequest
 

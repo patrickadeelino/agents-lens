@@ -35,8 +35,8 @@ The first integration used `codex exec --json`. It was enough for a single agent
 
 ## Related code
 
-- [Protocol and translation](../../apps/api-lens/src/executor/codex/app_server.py)
-- [Delegation](../../apps/api-lens/src/executor/codex/app_server_delegation.py)
-- [Command line and permissions](../../apps/api-lens/src/executor/codex/catalog_run.py)
-- [Process lifecycle](../../apps/api-lens/src/executor/process/codex_process.py)
+- [Protocol and translation](../../apps/api-lens/src/executor/agents/codex/app_server.py)
+- [Delegation](../../apps/api-lens/src/executor/agents/codex/app_server_delegation.py)
+- [Command line and permissions](../../apps/api-lens/src/executor/agents/codex/catalog_run.py)
+- [Process lifecycle](../../apps/api-lens/src/executor/process/agent_process.py)
 - [Pinned version](../../apps/api-lens/Dockerfile.executor)

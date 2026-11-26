@@ -77,7 +77,7 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 ## Engineering notes
 
-**One event format, saved first.** The executor [translates App Server notifications](apps/api-lens/src/executor/codex/app_server.py) into the capture's own event format, leaving out the ones the trajectory does not use, such as the echo of the prompt. The API appends them to a JSONL file. The interface correlates updates by item ID, and live and saved turns go through the [same projection](apps/web/src/trajectoryProjection.js).
+**One event format, saved first.** The executor [translates App Server notifications](apps/api-lens/src/executor/agents/codex/app_server.py) into the capture's own event format, leaving out the ones the trajectory does not use, such as the echo of the prompt. The API appends them to a JSONL file. The interface correlates updates by item ID, and live and saved turns go through the [same projection](apps/web/src/trajectoryProjection.js).
 
 **A tool's result is not the turn's result.** A turn can complete after a command fails. A command that never reports its end is shown as **Result unconfirmed** instead of being counted as a success or a failure. See the [command timeline](apps/web/src/timeline.js).
 
@@ -87,7 +87,7 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 **One damaged conversation stays isolated.** A conversation whose files cannot be read is [left out of the list](apps/api-lens/src/backend/application/conversation/conversations.py), and the history shows how many were skipped. The others can still be opened and continued.
 
-**Subagents arrive out of order.** A child's events can show up before the notification that links it to its parent. The executor [holds them briefly](apps/api-lens/src/executor/codex/app_server_delegation.py), within time, count and size limits, and marks a branch that never finished as an incomplete capture.
+**Subagents arrive out of order.** A child's events can show up before the notification that links it to its parent. The executor [holds them briefly](apps/api-lens/src/executor/agents/codex/app_server_delegation.py), within time, count and size limits, and marks a branch that never finished as an incomplete capture.
 
 **Sandboxing inside Docker.** Codex isolates each command with Bubblewrap, which Docker's default profiles block: relaxing only seccomp or only AppArmor was not enough in testing. The executor service disables both, while dropping every Linux capability and running as a regular user. This is a real trade-off, described below.
 

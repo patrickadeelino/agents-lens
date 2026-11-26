@@ -1,4 +1,4 @@
-"""Run one prompt in a Codex process and turn its events into executor messages."""
+"""Run one prompt in an agent process and turn its events into executor messages."""
 
 import json
 from asyncio import LimitOverrunError
@@ -8,41 +8,42 @@ from contextlib import aclosing
 
 from opentelemetry.trace import Span
 
-from src.executor.codex.app_server import AppServerError, AppServerTurn
-from src.executor.codex.catalog_run import CatalogRun
+from src.executor.agents.base import AgentAdapter, AgentError, AgentRun
 from src.shared.executor_protocol import ExecutorRequest, RunError, RunExit, RunOutput
 
-from .codex_process import codex_process
+from .agent_process import agent_process
 from .execution_report import ExecutionReport
 
 type ExecutionMessage = RunOutput | RunExit | RunError
 
-# What a broken or unexpected exchange with the app server can raise.
+# What a broken or unexpected exchange with an agent can raise.
 EXCHANGE_FAILURES = (
-    LimitOverrunError, AppServerError, OSError, EOFError, TimeoutError,
+    LimitOverrunError, AgentError, OSError, EOFError, TimeoutError,
     ValueError, KeyError, TypeError, AttributeError,
 )
 
 
 async def execution_messages(
-    run: CatalogRun, request: ExecutorRequest, span: Span,
+    adapter: AgentAdapter, run: AgentRun, request: ExecutorRequest, span: Span,
 ) -> AsyncGenerator[ExecutionMessage]:
     report = ExecutionReport(span)
     # The turn closes before its process, and the ending is sent while the process still exists.
-    async with codex_process(run) as process, aclosing(turn_messages(process, run, request, report)) as messages:
+    async with (
+        agent_process(run, request) as process,
+        aclosing(turn_messages(adapter, process, run, request, report)) as messages,
+    ):
         async for message in messages:
             yield message
 
 
 async def turn_messages(
-    process: Process | None, run: CatalogRun, request: ExecutorRequest, report: ExecutionReport,
+    adapter: AgentAdapter, process: Process | None, run: AgentRun, request: ExecutorRequest, report: ExecutionReport,
 ) -> AsyncGenerator[ExecutionMessage]:
     if process is None:
         yield report.start_failed()
         return
-    assert process.stdout is not None and process.stdin is not None
     report.started()
-    turn = AppServerTurn(process.stdin, process.stdout)
+    turn = adapter.start_turn(process)
     secret = json.dumps(run.api_key)[1:-1]
     try:
         async for event in turn.events(run, request):

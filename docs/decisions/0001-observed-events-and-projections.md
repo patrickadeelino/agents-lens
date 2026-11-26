@@ -46,7 +46,7 @@ The projection follows these rules:
 ## Related code
 
 - [Capture and flush](../../apps/api-lens/src/backend/application/capture/capture.py)
-- [Event translation](../../apps/api-lens/src/executor/codex/app_server.py)
+- [Event translation](../../apps/api-lens/src/executor/agents/codex/app_server.py)
 - [Command state in the API](../../apps/api-lens/src/backend/domain/turn/command_execution.py)
 - [Command timeline in the browser](../../apps/web/src/timeline.js)
 - [Turn outcome](../../apps/api-lens/src/backend/domain/turn/turn_outcome.py)

@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from src.backend.application.capture import capture_run
 from src.backend.application.capture.capture_run import FlushedRecord
 from src.backend.main import app
-from src.executor.codex.catalog_run import CatalogRun
+from src.executor.agents.codex.catalog_run import CatalogRun
 from src.shared.trace_events import TimedEvent
 from tests.integration.end_to_end.support import (
     LITERAL_PROMPT,

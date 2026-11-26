@@ -58,6 +58,6 @@ In the built image, sandboxed commands could not read the key, the executor hist
 - [Services](../../compose.yaml)
 - [Executor image](../../apps/api-lens/Dockerfile.executor)
 - [Folder rules](../../apps/api-lens/src/executor/workspace/workspace_folders.py)
-- [Sandbox permissions](../../apps/api-lens/src/executor/codex/catalog_run.py)
+- [Sandbox permissions](../../apps/api-lens/src/executor/agents/codex/catalog_run.py)
 - [Host names](../../apps/web/nginx.conf)
 - [Service boundaries](../../apps/api-lens/tests/architecture/test_layers.py)

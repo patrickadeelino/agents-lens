@@ -4,7 +4,7 @@ from asyncio import LimitOverrunError
 
 from opentelemetry.trace import Span
 
-from src.executor.codex.app_server import AppServerRejected
+from src.executor.agents.base import AgentRejected
 from src.shared.executor_protocol import RunError, RunExit
 from src.shared.observability import (
     EventProgress,
@@ -46,7 +46,7 @@ class ExecutionReport:
         if isinstance(error, LimitOverrunError):
             finish_span(self._span, "failed", error_code="event_too_large")
             return RunError(error="event_too_large")
-        if isinstance(error, AppServerRejected):
+        if isinstance(error, AgentRejected):
             return self._broken("app_server_request_rejected", exit_code=1)
         return self._broken("app_server_disconnected", exit_code=None)
 
