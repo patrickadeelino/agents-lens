@@ -12,6 +12,7 @@ from src.application.conversation_ports import (
 )
 from src.application.run_continuation import ContinuationInfo, describe_continuation
 from src.application.run_history import GetRunHistory
+from src.domain.lineage import ancestors, descendants
 from src.domain.turn_summary import TurnSummary
 from src.observability import event_log
 
@@ -93,7 +94,7 @@ class Conversations[Run: ConversationRun]:
         thread_id = result.thread_id if result else None
         if result is None and not root.is_active() and not root.has_trace():
             return None
-        chain = self.store.lineage(root)
+        chain = list(descendants(root))
         for child in chain[1:]:
             child_result = child.read_result()
             if child_result and (child_result.conflicting_thread_id is not None or
@@ -135,7 +136,7 @@ class Conversations[Run: ConversationRun]:
 
     def by_run(self, run_id: str) -> ThreadDetail | None:
         capture = self.store.find(run_id)
-        root = self.store.root_for(capture)
+        *_, root = ancestors(capture)
         detail = self._project(root, details=True)
         if detail and not any(turn.run_id == run_id for turn in detail.turns):
             raise ValueError("Invalid conversation lineage.")

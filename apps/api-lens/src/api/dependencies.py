@@ -15,7 +15,11 @@ from fastapi import Path as PathParam
 from src.application.capture import EventCapture
 from src.application.capture_run import CaptureRun
 from src.application.conversations import Conversations
-from src.application.run_continuation import RunSession, describe_continuation
+from src.application.run_continuation import (
+    RunSession,
+    conversation_thread,
+    describe_continuation,
+)
 from src.application.run_history import GetRunHistory
 from src.application.run_subscription import SubscribeToRun
 from src.infrastructure.capture_files import CaptureFiles
@@ -130,7 +134,7 @@ def resumable_capture(run_id: str) -> tuple[CaptureFiles, UUID]:
         projection = Conversations(ConversationStore(CAPTURE_ROOT))
         projection.by_run(run_id)
         continuation = describe_continuation(run_id, origin, result)
-        thread_id = origin.conversation_thread() if continuation.state == "available" else None
+        thread_id = conversation_thread(origin) if continuation.state == "available" else None
     except (OSError, ValueError) as error:
         raise HTTPException(status_code=503, detail="Run capture is unavailable.") from error
     if thread_id is None:

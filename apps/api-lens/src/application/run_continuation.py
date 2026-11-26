@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.domain.lineage import LinkedRun, ancestors, descendants
+
 
 class RunSession(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
@@ -23,11 +25,10 @@ class RecordedResult(Protocol):
     capture_failed: bool
 
 
-class SavedConversationRun(Protocol):
+class SavedConversationRun(LinkedRun, Protocol):
     def read_session(self) -> RunSession | None: ...
-    def latest_run_id(self) -> str: ...
+    def read_result(self) -> RecordedResult | None: ...
     def is_active(self) -> bool: ...
-    def conversation_thread(self) -> UUID | None: ...
 
 
 type ContinuationState = Literal["available", "active", "superseded", "unavailable"]
@@ -41,13 +42,20 @@ class ContinuationInfo:
     latest_run_id: str | None = None
 
 
+def conversation_thread(capture: SavedConversationRun) -> UUID | None:
+    """Return the thread confirmed by this run or its nearest confirmed ancestor."""
+    results = (run.read_result() for run in ancestors(capture))
+    return next((result.thread_id for result in results if result and result.thread_id), None)
+
+
 def describe_continuation(
     run_id: str, capture: SavedConversationRun, result: RecordedResult | None,
 ) -> ContinuationInfo:
     session = capture.read_session()
     if session is None:
         return ContinuationInfo("unavailable", "This run has no saved session.")
-    latest = capture.latest_run_id()
+    *_, last = descendants(capture)
+    latest = last.run_id
     state, reason = _eligibility(run_id, latest, capture, result)
     return ContinuationInfo(state, reason, session.previous_run_id, latest)
 
@@ -62,6 +70,6 @@ def _eligibility(
     if capture.is_active():
         return "active", "Wait for this run to finish."
     # A finished attempt that never confirmed its session resumes the thread its lineage confirmed.
-    if result is not None and result.conflicting_thread_id is None and capture.conversation_thread() is not None:
+    if result is not None and result.conflicting_thread_id is None and conversation_thread(capture) is not None:
         return "available", None
     return "unavailable", "Codex did not confirm a saved session for this run."

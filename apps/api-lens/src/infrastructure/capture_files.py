@@ -110,6 +110,19 @@ class CaptureFiles:
     def reserve_successor(self, successor: Self) -> None:
         self._publish_once(SUCCESSOR_NAME, successor.directory.name)
 
+    def previous_run_id(self) -> str | None:
+        session = self.read_session()
+        return session.previous_run_id if session else None
+
+    def previous(self) -> Self | None:
+        name = self.previous_run_id()
+        if name is None:
+            return None
+        try:
+            return self.find(self.directory.parent, name)
+        except FileNotFoundError as error:
+            raise ValueError("Invalid continuation link.") from error
+
     def successor_name(self) -> str | None:
         try:
             return self._saved_file(SUCCESSOR_NAME).read_text(encoding="utf-8")
@@ -130,42 +143,6 @@ class CaptureFiles:
     def discard_unpublished(self) -> None:
         (self.directory / SESSION_NAME).unlink(missing_ok=True)
         self.directory.rmdir()
-
-    def latest_run_id(self) -> str:
-        current = self
-        visited: set[Path] = set()
-        while current.directory not in visited:
-            visited.add(current.directory)
-            child = current.successor()
-            if child is None:
-                return current.directory.name
-            session = child.read_session()
-            if session is None or session.previous_run_id != current.directory.name:
-                raise ValueError("Invalid continuation link.")
-            current = child
-        raise ValueError("Continuation links contain a cycle.")
-
-    def conversation_thread(self) -> UUID | None:
-        """Return the thread confirmed by this run or its nearest confirmed ancestor."""
-        current = self
-        visited: set[Path] = set()
-        while current.directory not in visited:
-            visited.add(current.directory)
-            result = current.read_result()
-            if result is not None and result.thread_id is not None:
-                return result.thread_id
-            session = current.read_session()
-            if session is None or session.previous_run_id is None:
-                return None
-            try:
-                parent = self.find(self.directory.parent, session.previous_run_id)
-            except FileNotFoundError as error:
-                raise ValueError("Invalid continuation link.") from error
-            child = parent.successor()
-            if child is None or child.directory != current.directory:
-                raise ValueError("Invalid continuation link.")
-            current = parent
-        raise ValueError("Continuation links contain a cycle.")
 
     def _publish_once(self, name: str, contents: str) -> None:
         with NamedTemporaryFile(dir=self.directory, mode="w", encoding="utf-8", delete_on_close=False) as temporary:
