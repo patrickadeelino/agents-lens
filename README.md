@@ -81,7 +81,7 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 **A tool's result is not the turn's result.** A turn can complete after a command fails. A command that never reports its end is shown as **Result unconfirmed** instead of being counted as a success or a failure. See the [command timeline](apps/web/src/timeline.js).
 
-**Disconnects do not stop the work.** The capture keeps recording if the browser goes away. The browser comes back with the ID of the last event it received and [reads from there](apps/api-lens/src/backend/application/history/run_subscription.py). Integration tests cover [the disconnect](apps/api-lens/tests/integration/end_to_end/test_runs.py) and [the resume](apps/api-lens/tests/integration/backend/test_run_history.py).
+**Disconnects do not stop the work.** The capture keeps recording if the browser goes away. The browser comes back with the ID of the last event it received and [reads from there](apps/api-lens/src/backend/application/history/run_subscription.py). Integration tests cover [the disconnect](apps/api-lens/tests/integration/end_to_end/test_streaming.py) and [the resume](apps/api-lens/tests/integration/backend/test_run_history.py).
 
 **Follow-ups stay on one thread.** A follow-up resumes the Codex thread of the latest run, and each run accepts [a single successor](apps/api-lens/src/backend/infrastructure/storage/capture_files.py), so two requests cannot fork a conversation. A turn that failed without confirming its session can still be continued: the follow-up resumes the thread of the nearest earlier turn that confirmed one. If the first turn fails that way, there is no thread to resume. Token counts of a resumed turn exclude the earlier turns.
 
