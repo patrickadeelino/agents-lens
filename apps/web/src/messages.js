@@ -167,6 +167,10 @@ export const t = Object.freeze({
     noSession: "Codex did not confirm an available session for this run.",
     alreadyContinued: "The source run has already been continued. Your draft was kept.",
   },
+  busy: {
+    waiting: "Another run is in progress. You can send when it finishes.",
+    refused: "Another run is in progress. Your draft was kept.",
+  },
   app: {
     openHistory: "Open history",
     loadingConversation: "Loading conversation…",

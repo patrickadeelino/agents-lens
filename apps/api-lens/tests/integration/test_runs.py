@@ -673,10 +673,12 @@ def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
 
 @pytest.mark.usefixtures("executor_socket")
 def test_a_continuation_rejected_by_a_busy_executor_can_be_retried(
-    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend, _ = live_http
     first_id = backend.post("/runs", json=prompt_body("save marker: niobium")).headers["X-Run-ID"]
+    # Both prompts can pass the backend check at once; the executor then rejects the second.
+    monkeypatch.setattr(dependencies, "reject_while_running", lambda: None)
     with backend.stream("POST", "/runs", json=prompt_body(LITERAL_PROMPT)) as other:
         frames = other.iter_lines()
         next_frame(frames)
@@ -688,6 +690,32 @@ def test_a_continuation_rejected_by_a_busy_executor_can_be_retried(
     assert backend.get(f"/runs/{busy_id}/events").json()["continuation"]["state"] == "available"
 
     retried = backend.post(f"/runs/{busy_id}/continue", json={"prompt": "recall the marker"})
+    assert retried.status_code == 200
+    assert "niobium" in retried.text
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_prompts_are_refused_without_being_saved_while_a_run_is_active(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+) -> None:
+    backend, _ = live_http
+    first_id = backend.post("/runs", json=prompt_body("save marker: niobium")).headers["X-Run-ID"]
+    captures = run_workspace / "captures"
+    with backend.stream("POST", "/runs", json=prompt_body(LITERAL_PROMPT)) as other:
+        frames = other.iter_lines()
+        next_frame(frames)
+        saved = sorted(captures.iterdir())
+        responses = [
+            backend.post("/runs", json=prompt_body("independent conversation")),
+            backend.post(f"/runs/{first_id}/continue", json={"prompt": "recall the marker"}),
+        ]
+        assert [(r.status_code, r.json()["detail"]) for r in responses] == [(409, "executor_busy")] * 2
+        assert sorted(captures.iterdir()) == saved
+        (run_workspace / "state" / "release").touch()
+        list(frames)
+
+    assert backend.get(f"/runs/{first_id}/events").json()["continuation"]["state"] == "available"
+    retried = backend.post(f"/runs/{first_id}/continue", json={"prompt": "recall the marker"})
     assert retried.status_code == 200
     assert "niobium" in retried.text
 

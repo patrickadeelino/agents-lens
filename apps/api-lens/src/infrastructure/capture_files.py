@@ -72,6 +72,11 @@ class CaptureFiles:
         with self._activity_lock:
             return self.directory in self._active
 
+    @classmethod
+    def any_active(cls, root: Path) -> bool:
+        with cls._activity_lock:
+            return any(directory.parent == root for directory in cls._active)
+
     def ensure_trace(self) -> None:
         (self.directory / TRACE_NAME).touch(exist_ok=True)
 

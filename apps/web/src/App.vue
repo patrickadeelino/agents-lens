@@ -10,6 +10,7 @@ import { inspectionUrl, resolveInspectedRun, workspaceName } from "./conversatio
 import { CONNECTION } from "./connectionState.js";
 import { maskPaths } from "./eventPresentation.js";
 import { loadRunHistory, RunHttpError, streamContinuation, streamPrompt, streamSavedRun } from "./runs.js";
+import { createRunTracker } from "./runTracker.js";
 import { runOutcome, savedOutcome } from "./trajectoryProjection.js";
 import { useRunFeedback } from "./runFeedback.js";
 import { useRunTrajectory } from "./useRunTrajectory.js";
@@ -56,6 +57,17 @@ let operation;
 let locationRequest;
 let listRequest;
 
+const runningRunId = ref(null);
+const runTracker = createRunTracker({
+  watch: (runId, signal) => streamSavedRun(runId, 0, { signal, onOpen() {}, onRecord() {}, onReconnect() {} }),
+  isActive: async (runId, signal) => (await byRun(runId, signal)).turns.some((turn) => turn.run_id === runId && turn.status === "active"),
+  onChange(runId) {
+    runningRunId.value = runId;
+    if (!runId) loadThreads();
+  },
+  wait: () => new Promise((resolve) => setTimeout(resolve, 2000)),
+});
+
 const turns = computed(() => conversation.value?.turns ?? []);
 const selectedTurn = computed(() => turns.value.find((turn) => turn.run_id === inspectedRunId.value));
 const selectedNumber = computed(() => turns.value.findIndex((turn) => turn.run_id === inspectedRunId.value) + 1 || null);
@@ -65,6 +77,7 @@ const activeTurn = computed(() => latestTurn.value?.status === "active" ? latest
 const activeNumber = computed(() => activeTurn.value ? turns.value.length : null);
 const hasPane = computed(() => selectedTurn.value != null);
 const canContinue = computed(() => executorReady.value && !busy.value && !activeTurn.value && conversation.value?.continuation?.state === "available");
+const canSend = computed(() => canContinue.value && !runningRunId.value);
 const continuationDraft = computed({
   get: () => continuationDrafts.get(conversation.value?.root_run_id) ?? "",
   set: (value) => continuationDrafts.set(conversation.value?.root_run_id, value),
@@ -73,6 +86,7 @@ const continuationNote = computed(() => {
   if (demoMode.value) return t.demo.continuation;
   if (activeTurn.value) return t.continuation.availableAfter(activeNumber.value);
   if (busy.value) return t.continuation.submitting;
+  if (runningRunId.value && conversation.value?.continuation?.state === "available") return t.busy.waiting;
   if (executorReady.value !== true && conversation.value?.continuation?.state === "available") {
     return executorReady.value === false ? t.continuation.needsExecutor : t.continuation.checkingExecutor;
   }
@@ -230,6 +244,8 @@ async function loadThreads() {
     const payload = await response.json();
     request.signal.throwIfAborted();
     threads.value = payload.threads;
+    const running = payload.threads.find((thread) => thread.status === "active");
+    if (running) runTracker.track(running.latest_run_id);
   } catch {
     if (!request.signal.aborted) threadsError.value = true;
   } finally {
@@ -350,6 +366,7 @@ function provisionalConversation(runId, text, legacy = false) {
 function acceptedRun(runId, text, origin) {
   const current = conversation.value;
   resetLive(runId);
+  runTracker.track(runId);
   const turn = provisionalTurn(runId, text);
   if (origin && current) {
     conversation.value = {
@@ -512,7 +529,7 @@ function onWorkspaceSelected(selection) {
 }
 
 async function sendPrompt(text, origin = null) {
-  if (!executorReady.value || busy.value || !text.trim() || (origin ? !canContinue.value : (!selectedWorkspace.value || pickingWorkspace.value))) return;
+  if (!executorReady.value || busy.value || runningRunId.value || !text.trim() || (origin ? !canContinue.value : (!selectedWorkspace.value || pickingWorkspace.value))) return;
   composerError.value = "";
   continuationError.value = "";
   const request = beginOperation();
@@ -543,7 +560,12 @@ async function sendPrompt(text, origin = null) {
     if (signal.aborted) return;
     if (error instanceof RunHttpError && error.status === 503) checkExecutor();
     if (accepted) await recoverSubmission(accepted, signal);
-    else if (!origin) composerError.value = submitError(error);
+    else if (error instanceof RunHttpError && error.detail === "executor_busy") {
+      // Another tab started a run; finding it in the list locks the composer.
+      if (origin) continuationError.value = t.busy.refused;
+      else composerError.value = t.busy.refused;
+      loadThreads();
+    } else if (!origin) composerError.value = submitError(error);
     else if (error instanceof RunHttpError && error.status === 409) {
       continuationError.value = t.continuation.alreadyContinued;
       const refreshed = await refreshConversation(origin, signal).catch(() => null);
@@ -631,6 +653,7 @@ onMounted(() => {
   window.addEventListener("hashchange", synchronizeHash);
   window.addEventListener("keydown", onEscape);
   window.addEventListener("focus", checkExecutor);
+  window.addEventListener("focus", loadThreads);
   checkExecutor();
   restoreLocation();
 });
@@ -641,6 +664,8 @@ onUnmounted(() => {
   window.removeEventListener("hashchange", synchronizeHash);
   window.removeEventListener("keydown", onEscape);
   window.removeEventListener("focus", checkExecutor);
+  window.removeEventListener("focus", loadThreads);
+  runTracker.stop();
   locationRequest?.abort();
   listRequest?.abort();
   cancelOperation();
@@ -694,7 +719,7 @@ onUnmounted(() => {
               </button>
               <div class="composer-submit">
                 <kbd>{{ t.composer.shortcut }}</kbd>
-                <button id="execute" type="submit" class="run-button" :disabled="!executorReady || busy || pickingWorkspace || !selectedWorkspace || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
+                <button id="execute" type="submit" class="run-button" :disabled="!executorReady || busy || pickingWorkspace || !selectedWorkspace || !!runningRunId || !prompt.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
                   {{ busy ? t.composer.sending : t.composer.run }}
                   <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
                 </button>
@@ -703,6 +728,7 @@ onUnmounted(() => {
           </div>
           <p v-if="selectedWorkspace" class="composer-hint workspace-path">{{ selectedWorkspace.path }}</p>
           <p v-else-if="executorReady" class="composer-hint">{{ t.composer.needsFolder }}</p>
+          <p v-if="runningRunId && !busy" class="composer-hint" role="status">{{ t.busy.waiting }}</p>
           <p v-if="composerError" class="composer-status" role="alert">{{ t.composer.startFailed(composerError) }}</p>
         </form>
       </section>
@@ -738,16 +764,16 @@ onUnmounted(() => {
           <form class="continuation-form composer-card" :class="{ 'continuation-waiting': !canContinue && !continuationDraft }" @submit.prevent="sendPrompt(continuationDraft, conversation.latest_run_id)">
             <label for="continuation-prompt" class="visually-hidden">{{ t.continuation.label }}</label>
             <textarea v-if="canContinue || continuationDraft" id="continuation-prompt" v-model="continuationDraft" rows="2" required
-              :readonly="!canContinue" :aria-describedby="canContinue ? undefined : 'continuation-note'"
+              :readonly="!canContinue" :aria-describedby="canSend ? undefined : 'continuation-note'"
               :placeholder="t.continuation.placeholder"
               @keydown.ctrl.enter.prevent="$event.currentTarget.form.requestSubmit()"
               @keydown.meta.enter.prevent="$event.currentTarget.form.requestSubmit()"></textarea>
             <textarea v-else id="continuation-prompt" class="visually-hidden" disabled aria-describedby="continuation-note"></textarea>
             <div class="composer-bar">
-              <p v-if="!canContinue" id="continuation-note" class="quiet-text">{{ continuationNote }}</p>
+              <p v-if="!canSend" id="continuation-note" class="quiet-text">{{ continuationNote }}</p>
               <div class="composer-submit">
-                <kbd v-if="canContinue">{{ t.composer.shortcut }}</kbd>
-                <button type="submit" class="run-button" :disabled="!canContinue || !continuationDraft.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
+                <kbd v-if="canSend">{{ t.composer.shortcut }}</kbd>
+                <button type="submit" class="run-button" :disabled="!canSend || !continuationDraft.trim()" aria-keyshortcuts="Control+Enter Meta+Enter">
                   {{ t.continuation.send }}
                   <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
                 </button>

@@ -44,7 +44,16 @@ class PromptCapture:
     capture: CaptureRun
 
 
+def reject_while_running() -> None:
+    """Refuse a prompt before saving it while the single executor is running another one."""
+    # Not atomic: two simultaneous prompts can pass, and the executor still rejects the second.
+    if CaptureFiles.any_active(CAPTURE_ROOT):
+        event_log("run.rejected", "api", "rejected", error_code="executor_busy")
+        raise HTTPException(status_code=409, detail="executor_busy")
+
+
 def get_prompt_capture(request: NewPromptRequest) -> PromptCapture:
+    reject_while_running()
     socket = executor_socket()
     if request.workspace_id is not None:
         workspace = selected_workspace(socket, request.workspace_id)
@@ -79,6 +88,7 @@ def selected_workspace(socket: str, selection_id: UUID) -> str:
 
 
 def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> PromptCapture:
+    reject_while_running()
     origin, thread_id = resumable_capture(run_id)
     socket = executor_socket()
     session = origin.read_session()
