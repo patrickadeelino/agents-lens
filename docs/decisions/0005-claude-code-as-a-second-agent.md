@@ -64,7 +64,7 @@ Translation is tested with three recorded runs of the real model.
 - The keys are separated by each agent's sandbox rather than by containers. The nested mode is weaker than the default: commands see the executor's process list and can read the container's system files, including the application's code.
 - The executor image includes Claude Code, about 370 MB, even when it is off. Turning it on takes two lines in `.env`.
 - Claude Code creates a `.claude` folder in the chosen folder.
-- **Not tested yet:** the model through this app, background shell commands, parallel subagents, the sandbox in a resumed turn, the Codex sandbox against the second key, and ARM.
+- **Not tested yet:** the model through this app with an API key, background shell commands, parallel subagents, the sandbox in a resumed turn, the Codex sandbox against the second key, and ARM.
 
 ## Related code
 

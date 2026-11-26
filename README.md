@@ -3,15 +3,17 @@
 [![CI](https://github.com/patrickadeelino/agents-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/patrickadeelino/agents-lens/actions/workflows/ci.yml)
 ![Backend coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/patrickadeelino/agents-lens/badges/coverage.json)
 
-Agent Lens is a local web interface for watching a coding agent work. Choose a folder, send a prompt and follow what Codex does as it happens: messages, shell commands, file changes, failures and subagents.
+Agent Lens is a local web interface for watching a coding agent work. Choose a folder, send a prompt and follow what the agent does as it happens: messages, shell commands, file changes, failures and subagents. It runs [Codex](#run-it-with-codex) and, experimentally, [Claude Code](#claude-code-experimental).
 
-![A live run: choosing a folder, sending a prompt and following the trajectory as Codex runs the tests, changes a file and asks a subagent to review it.](docs/images/live-run.gif)
+![The same prompt in Codex, on the left, and in Claude Code, on the right: each runs the tests, changes a file and asks a subagent to review it, while the interface follows the trajectory.](docs/images/live-run.gif)
+
+<sub>Same prompt and project, one run each, recorded separately and shown at real speed. Failure counts follow what each command reported: Claude Code piped its failing test run through `tail`, so that command counts as completed. A demonstration, not a benchmark.</sub>
 
 - **Live trajectory** of each turn, with command output and exit codes.
 - **Failures and unconfirmed results** kept visible, separate from the turn's own outcome.
 - **Subagents** shown as branches of the turn that started them.
-- **Reconnection** to a running turn, and follow-up prompts in the same Codex thread.
-- **Token usage** reported by Codex and **durations** measured locally.
+- **Reconnection** to a running turn, and follow-up prompts in the same agent session.
+- **Token usage** reported by the agent and **durations** measured locally. For Claude Code, the count covers the main agent, not its subagents.
 
 ## Try it without an API key
 
@@ -72,21 +74,21 @@ CLAUDE_CODE_API_KEY=your-anthropic-api-key
 
 A selector then appears on the new-conversation screen, and each conversation keeps its agent. Set `AGENT_LENS_CLAUDE_MODEL` to change the model. The image downloads the official Claude Code **2.1.327** binary, unmodified, and checks its SHA-256, even when Claude Code is off.
 
-Claude Code has been tested here with recorded runs and with the real command line against a local stand-in for its API, **not yet with the model through this app**. Its commands run in Claude Code's sandbox in the nested mode that containers require, which is weaker than the default: they see the executor's process list and can read the container's system files. The keys, the executor's data and the other folders of your workspace are denied. Claude Code creates a `.claude` folder in the folder you choose.
+Claude Code has been tested here with recorded runs, with the real command line against a local stand-in for its API and with a few turns of the model through this app. **The setup with an Anthropic API key described above has not been run against the model yet.** Its commands run in Claude Code's sandbox in the nested mode that containers require, which is weaker than the default: they see the executor's process list and can read the container's system files. The keys, the executor's data and the other folders of your workspace are denied. Claude Code creates a `.claude` folder in the folder you choose.
 
 ## Architecture
 
-![Architecture: the browser reaches Nginx and the API inside Docker Compose. The API talks over a Unix socket to the executor container, where Codex App Server calls the OpenAI API and runs sandboxed commands on the one mounted folder. The API saves events to a captures volume before streaming them. Telemetry is optional.](docs/images/architecture.png)
+![Architecture: the browser reaches Nginx and the API inside Docker Compose. The API talks over a Unix socket to the executor container. There each conversation uses one agent: Codex App Server, which calls the OpenAI API, or optionally the Claude Code command line, which calls the Anthropic API. Each runs commands in its own sandbox, without network, on the one mounted folder. The API saves events to a captures volume before streaming them. Telemetry is optional.](docs/images/architecture.png)
 
 | Part | Responsibility | Boundary |
 |---|---|---|
 | Browser | Builds the trajectory from the events | Starts a conversation with a folder selection ID, not a host path |
 | Nginx | Serves the interface and proxies the API | Refuses unknown `Host` names |
 | API | Saves each capture and streams it | Has neither the API key nor the mounted folder |
-| Executor | Drives Codex and validates the folder | Publishes no port |
-| Codex | Calls the model and runs commands | Commands get no network |
+| Executor | Drives the agent and validates the folder | Publishes no port |
+| Codex or Claude Code | Calls the model and runs commands | Commands get no network |
 
-A turn runs like this: the browser sends the prompt, the API creates a capture and calls the executor, and the executor starts or resumes a Codex thread. Each event is written and flushed to disk **before** it is sent to the browser.
+A turn runs like this: the browser sends the prompt, the API creates a capture and calls the executor, and the executor starts or resumes the agent's session. Each event is written and flushed to disk **before** it is sent to the browser.
 
 ## Engineering notes
 
@@ -119,7 +121,7 @@ The main choices, with their alternatives and costs:
 ## Security and limitations
 
 - The interface listens on loopback, accepts only the `localhost` and `127.0.0.1` host names and **has no authentication**. Do not expose it to a network.
-- Codex runs each command in its own sandbox: no network, and access limited to the chosen folder and basic system paths.
+- Codex runs each command in its own sandbox: no network, and access limited to the chosen folder and basic system paths. Claude Code's sandbox is [configured differently](#claude-code-experimental): its commands can read more of the container's files, including the application's code.
 - The **executor container runs with AppArmor and seccomp disabled**. It has no Linux capabilities, cannot gain privileges and runs as a regular user, but it is less isolated from your machine than a default container.
 - The API key is passed to the executor as a Compose secret and masked if it appears in an event. A `.env` file keeps it in plain text on disk.
 - Prompts, command output and captures are stored unencrypted. Review them before sharing screenshots or recordings.
@@ -127,7 +129,7 @@ The main choices, with their alternatives and costs:
 - A turn interrupted by an API restart is marked as unconfirmed when the API starts again, and the conversation can be continued unless it was its first turn. This assumes a single API process.
 - A turn fails if the executor sends nothing for 120 seconds.
 - An event larger than 8 MiB ends the capture, keeping what was already saved.
-- Tested on Linux x86_64 with kernel 5.15, Codex **0.171.0** and `gpt-6.2-sol`. macOS, Windows and ARM have not been tested. On Ubuntu 23.10 or later, the host may restrict the user namespaces the sandbox needs.
+- Tested on Linux x86_64 with kernel 5.15, Codex **0.171.0** with `gpt-6.2-sol` and Claude Code **2.1.327** with `claude-sonnet-5-5`. macOS, Windows and ARM have not been tested. On Ubuntu 23.10 or later, the host may restrict the user namespaces the sandbox needs.
 
 Set `AGENT_LENS_MODEL` to use another model. The [optional observability setup](observability/README.md) adds logs and traces.
 
@@ -135,7 +137,7 @@ Set `AGENT_LENS_MODEL` to use another model. The [optional observability setup](
 
 Only needed to change the code. To run Agent Lens you need Docker, plus an API key for live runs.
 
-The API code has two services under [`apps/api-lens/src`](apps/api-lens/src): `backend` (HTTP API, saved captures and history) and `executor` (Codex process and folders). They meet only through `shared`. Tests keep these [boundaries](apps/api-lens/tests/architecture/test_layers.py) and a limit of [30 lines per function](apps/api-lens/tests/architecture/test_function_size.py), and Ruff allows two nested blocks at most.
+The API code has two services under [`apps/api-lens/src`](apps/api-lens/src): `backend` (HTTP API, saved captures and history) and `executor` (agent processes and folders). They meet only through `shared`. Tests keep these [boundaries](apps/api-lens/tests/architecture/test_layers.py) and a limit of [30 lines per function](apps/api-lens/tests/architecture/test_function_size.py), and Ruff allows two nested blocks at most.
 
 <details>
 <summary>Lint, type checks, tests and build</summary>
