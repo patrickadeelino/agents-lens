@@ -7,6 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MAX_FOLDER_PATH = 4096
 
+type AgentName = Literal["codex", "claude_code"]
+
+# The agent of every conversation saved before there was a choice.
+DEFAULT_AGENT: AgentName = "codex"
+
+
+class AvailableAgents(BaseModel):
+    agents: list[AgentName]
+
 
 class WorkspaceSelection(BaseModel):
     id: UUID
@@ -34,6 +43,7 @@ class WorkspaceCheck(BaseModel):
 
 class ExecutorRequest(WorkspaceCheck):
     prompt: str
+    agent: AgentName = DEFAULT_AGENT
     thread_id: UUID | None = None
 
     @field_validator("prompt")

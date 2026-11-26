@@ -14,7 +14,7 @@ from fastapi import Path as PathParam
 
 from src.backend.api.schemas import NewPromptRequest, PromptRequest
 from src.backend.application.capture.capture import EventCapture
-from src.backend.application.capture.capture_run import CaptureRun
+from src.backend.application.capture.capture_run import CaptureRun, ExecutePrompt
 from src.backend.application.conversation.continue_conversation import (
     ContinueConversation,
 )
@@ -67,6 +67,7 @@ REFUSALS: dict[Refusal, tuple[int, str]] = {
     "selection_expired": (409, "Select the folder again."),
     "executor_unavailable": (503, "Executor unavailable."),
     "capture_unavailable": (503, "Capture directory is unavailable."),
+    "agent_unavailable": (409, "This agent is not configured."),
 }
 
 
@@ -98,17 +99,19 @@ def requested_folder(request: NewPromptRequest) -> FolderChoice | None:
 def get_prompt_capture(request: NewPromptRequest) -> PromptCapture:
     use_case = StartConversation(conversation_store(), executor_client)
     with refusals_as_http():
-        started = use_case.execute(request.prompt, requested_folder(request))
-    return prepare_capture(request.prompt, executor_socket(), started.run, workspace=started.workspace)
+        started = use_case.execute(request.prompt, requested_folder(request), request.agent)
+    execute = partial(executor_client().run, workspace=started.workspace, agent=request.agent)
+    return prepare_capture(request.prompt, started.run, execute)
 
 
 def get_continuation_capture(run_id: RunIdPath, request: PromptRequest) -> PromptCapture:
     use_case = ContinueConversation(conversation_store(), executor_client)
     with refusals_as_http():
         accepted = use_case.execute(run_id, request.prompt)
-    return prepare_capture(
-        request.prompt, executor_socket(), accepted.run, thread_id=accepted.thread_id, workspace=accepted.workspace,
+    execute = partial(
+        executor_client().run, workspace=accepted.workspace, agent=accepted.agent, thread_id=accepted.thread_id,
     )
+    return prepare_capture(request.prompt, accepted.run, execute, expected_thread=accepted.thread_id)
 
 
 def executor_socket() -> str:
@@ -120,10 +123,9 @@ def executor_socket() -> str:
 
 
 def prepare_capture(
-    prompt: str, socket: str, output: CaptureFiles, *, workspace: str, thread_id: UUID | None = None,
+    prompt: str, output: CaptureFiles, execute: ExecutePrompt, *, expected_thread: UUID | None = None,
 ) -> PromptCapture:
     bind_run_id(output.directory.name)
     event_log("run.accepted", "api", "accepted")
-    execute = partial(ExecutorClient(socket).run, thread_id=thread_id, workspace=workspace)
-    capture = CaptureRun(prompt, execute, EventCapture(), output, expected_thread=thread_id)
+    capture = CaptureRun(prompt, execute, EventCapture(), output, expected_thread=expected_thread)
     return PromptCapture(output.directory.name, capture)

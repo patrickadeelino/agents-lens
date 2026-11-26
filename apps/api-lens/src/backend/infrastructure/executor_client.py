@@ -14,6 +14,9 @@ from src.backend.application.capture.capture_run import (
 )
 from src.backend.application.conversation.prompt_rules import PromptRefused, Refusal
 from src.shared.executor_protocol import (
+    DEFAULT_AGENT,
+    AgentName,
+    AvailableAgents,
     ExecutorRequest,
     FolderListing,
     RunError,
@@ -50,6 +53,18 @@ class ExecutorClient:
         except httpx.RequestError as error:
             raise PromptRefused("executor_unavailable") from error
 
+    def available_agents(self) -> list[AgentName]:
+        response = self._workspace_request("GET", "/agents", timeout=2)
+        return AvailableAgents.model_validate_json(response.content).agents
+
+    def check_agent(self, agent: AgentName) -> None:
+        try:
+            available = self.available_agents()
+        except (httpx.HTTPError, ValueError) as error:
+            raise PromptRefused("executor_unavailable") from error
+        if agent not in available:
+            raise PromptRefused("agent_unavailable")
+
     def list_folders(self, path: str) -> FolderListing:
         response = self._workspace_request("GET", "/folders", timeout=5, params={"path": path})
         return FolderListing.model_validate_json(response.content)
@@ -79,13 +94,14 @@ class ExecutorClient:
 
     def run(
         self, prompt: str, on_stdout: StdoutConsumer, *,
-        workspace: str, thread_id: UUID | None = None,
+        workspace: str, thread_id: UUID | None = None, agent: AgentName = DEFAULT_AGENT,
     ) -> int | None:
         """Deliver the stdout lines and return the terminal status."""
         with operation_span("executor.request", kind=SpanKind.CLIENT) as span:
             event_log("executor.request.started", "executor_client", "started")
             try:
-                exit_code = self._request(ExecutorRequest(prompt=prompt, thread_id=thread_id, workspace=workspace), on_stdout, span)
+                request = ExecutorRequest(prompt=prompt, thread_id=thread_id, workspace=workspace, agent=agent)
+                exit_code = self._request(request, on_stdout, span)
             except httpx.HTTPError as error:
                 failure_code = executor_http_error_code(span, error)
                 finish_span(span, "failed", error_code=failure_code)

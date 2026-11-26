@@ -11,6 +11,8 @@ from pydantic import (
     model_validator,
 )
 
+from src.shared.executor_protocol import DEFAULT_AGENT, AgentName
+
 
 class PromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -25,6 +27,7 @@ class PromptRequest(BaseModel):
 
 
 class NewPromptRequest(PromptRequest):
+    agent: AgentName = DEFAULT_AGENT
     workspace_id: UUID | None = None
     workspace_run_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,128}$")] | None = None
 

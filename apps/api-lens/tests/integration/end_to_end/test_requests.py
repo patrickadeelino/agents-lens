@@ -38,6 +38,7 @@ def test_run_rejects_unavailable_capture_directory(
     backend, _ = live_http
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "unused.sock"))
     monkeypatch.setattr(ExecutorClient, "selected_folder", lambda *_: str(run_workspace / "example"))
+    monkeypatch.setattr(ExecutorClient, "check_agent", lambda *_: None)
     (run_workspace / "captures").touch()
     response = backend.post("/runs", json=prompt_body("Read the example."))
 

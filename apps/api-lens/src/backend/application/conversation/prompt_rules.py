@@ -3,12 +3,14 @@
 from typing import Literal, Protocol
 
 from src.backend.application.conversation.run_continuation import RunSession
+from src.shared.executor_protocol import AgentName
 from src.shared.observability import event_log
 
 type Refusal = Literal[
     "executor_busy", "run_not_found", "run_unreadable", "not_continuable", "already_continued",
     "conversation_not_found", "history_unavailable", "folder_missing",
     "workspace_rejected", "folder_required", "selection_expired", "executor_unavailable", "capture_unavailable",
+    "agent_unavailable",
 ]
 
 
@@ -19,7 +21,11 @@ class PromptRefused(Exception):
         self.reason = reason
 
 
-class WorkspaceGate(Protocol):
+class ExecutorGate(Protocol):
+    def check_agent(self, agent: AgentName) -> None:
+        """Raise PromptRefused when the executor cannot run this agent."""
+        ...
+
     def check_workspace(self, workspace: str) -> None:
         """Raise PromptRefused when the folder cannot be used."""
         ...
@@ -46,6 +52,10 @@ def reject_while_running(runs: ActivityLog) -> None:
 
 
 def saved_workspace(find: FindSession, run_id: str) -> str:
+    return saved_session(find, run_id).workspace
+
+
+def saved_session(find: FindSession, run_id: str) -> RunSession:
     try:
         session = find(run_id).read_session()
     except FileNotFoundError as error:
@@ -54,7 +64,7 @@ def saved_workspace(find: FindSession, run_id: str) -> str:
         raise PromptRefused("history_unavailable") from error
     if session is None:
         raise PromptRefused("folder_missing")
-    return session.workspace
+    return session
 
 
 class RunCreator[Run](Protocol):

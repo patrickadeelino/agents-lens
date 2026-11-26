@@ -12,10 +12,11 @@ from src.backend.application.conversation.conversation_ports import (
 )
 from src.backend.application.conversation.conversations import Conversations
 from src.backend.application.conversation.prompt_rules import (
+    ExecutorGate,
     PromptRefused,
-    WorkspaceGate,
     create_run,
     reject_while_running,
+    saved_session,
     saved_workspace,
 )
 from src.backend.application.conversation.run_continuation import (
@@ -23,6 +24,7 @@ from src.backend.application.conversation.run_continuation import (
     conversation_thread,
     describe_continuation,
 )
+from src.shared.executor_protocol import AgentName
 
 
 class ContinuableRun(ConversationRun, Protocol):
@@ -43,6 +45,7 @@ class AcceptedContinuation[Run]:
     run: Run
     thread_id: UUID
     workspace: str
+    agent: AgentName
 
 
 def reserve_turn[Run: ContinuableRun](origin: Run, output: Run) -> None:
@@ -58,7 +61,7 @@ def reserve_turn[Run: ContinuableRun](origin: Run, output: Run) -> None:
 
 
 class ContinueConversation[Run: ContinuableRun]:
-    def __init__(self, store: ContinuationStore[Run], executor: Callable[[], WorkspaceGate]) -> None:
+    def __init__(self, store: ContinuationStore[Run], executor: Callable[[], ExecutorGate]) -> None:
         self._store = store
         # Resolved only after the history checks, so an unusable run is reported first.
         self._executor = executor
@@ -67,14 +70,17 @@ class ContinueConversation[Run: ContinuableRun]:
         """Check every rule before saving, then link the new turn to the one it continues."""
         reject_while_running(self._store)
         origin, thread_id = self._resumable(run_id)
+        # A session can only be resumed by the agent that created it.
+        agent = saved_session(self._store.find, run_id).agent
         executor = self._executor()
         workspace = saved_workspace(self._store.find, run_id)
         executor.check_workspace(workspace)
+        executor.check_agent(agent)
         output = create_run(self._store, RunSession(
-            previous_run_id=run_id, prompt=prompt, submitted_at=datetime.now(UTC), workspace=workspace,
+            previous_run_id=run_id, prompt=prompt, submitted_at=datetime.now(UTC), workspace=workspace, agent=agent,
         ))
         reserve_turn(origin, output)
-        return AcceptedContinuation(output, thread_id, workspace)
+        return AcceptedContinuation(output, thread_id, workspace, agent)
 
     def _resumable(self, run_id: str) -> tuple[Run, UUID]:
         try:

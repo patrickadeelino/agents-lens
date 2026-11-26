@@ -1,4 +1,4 @@
-"""Derive whether a saved run can start another turn in its Codex session."""
+"""Derive whether a saved run can start another turn in its agent session."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.backend.domain.conversation.lineage import LinkedRun, ancestors, descendants
+from src.shared.executor_protocol import DEFAULT_AGENT, AgentName
 
 
 class RunSession(BaseModel):
@@ -16,6 +17,7 @@ class RunSession(BaseModel):
     workspace: str = Field(min_length=1)
     submitted_at: datetime
     previous_run_id: str | None = None
+    agent: AgentName = DEFAULT_AGENT
 
 
 class RecordedResult(Protocol):
@@ -72,4 +74,4 @@ def _eligibility(
     # A finished attempt that never confirmed its session resumes the thread its lineage confirmed.
     if result is not None and result.conflicting_thread_id is None and conversation_thread(capture) is not None:
         return "available", None
-    return "unavailable", "Codex did not confirm a saved session for this run."
+    return "unavailable", "The agent did not confirm a saved session for this run."

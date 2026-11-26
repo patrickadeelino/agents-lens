@@ -78,8 +78,8 @@ def test_a_saved_folder_outside_the_root_cannot_be_used(
     first = backend.post("/runs", json=prompt_body("save marker: niobium")).headers["X-Run-ID"]
     narrower = run_config.workspace_root / "elsewhere"
     narrower.mkdir()
-    narrowed = replace(run_config, workspace_root=narrower)
-    monkeypatch.setattr(executor, "configured_run", lambda: narrowed)
+    narrowed = replace(executor.configured_setup(), workspace_root=narrower)
+    monkeypatch.setattr(executor, "configured_setup", lambda: narrowed)
     follow_up = backend.post(f"/runs/{first}/continue", json={"prompt": "recall the marker"})
     assert follow_up.status_code == 422
     sibling = backend.post("/runs", json={"prompt": "new conversation", "workspace_run_id": first})

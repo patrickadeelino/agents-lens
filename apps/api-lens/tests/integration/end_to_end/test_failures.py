@@ -63,6 +63,7 @@ def test_run_keeps_observed_records_and_rejects_invalid_executor_streams(
     tail: tuple[dict[str, object], ...],
 ) -> None:
     monkeypatch.setattr(ExecutorClient, "selected_folder", lambda *_: str(run_workspace / "example"))
+    monkeypatch.setattr(ExecutorClient, "check_agent", lambda *_: None)
     invalid_executor = FastAPI()
     event = {"type": "turn.started"}
 
@@ -96,6 +97,7 @@ def test_run_reports_unconfirmed_result_when_socket_is_unreachable(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(ExecutorClient, "selected_folder", lambda *_: str(run_workspace / "example"))
+    monkeypatch.setattr(ExecutorClient, "check_agent", lambda *_: None)
     monkeypatch.setenv("AGENT_LENS_EXECUTOR_SOCKET", str(run_workspace / "missing.sock"))
     backend, _ = live_http
 

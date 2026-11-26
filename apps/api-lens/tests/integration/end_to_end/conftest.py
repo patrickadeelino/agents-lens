@@ -12,7 +12,9 @@ import pytest
 from src.backend.api import dependencies
 from src.backend.main import app
 from src.executor import main as executor
-from src.executor.agents.codex.catalog_run import CatalogRun
+from src.executor.agents.codex.adapter import codex_agent
+from src.executor.agents.codex.catalog_run import CatalogRun, ExecutorConfig
+from src.executor.agents.configured import ExecutorSetup
 from src.executor.main import app as executor_app
 from src.executor.workspace.workspace_selections import WorkspaceSelections
 from tests.integration.end_to_end.fake_codex import PROBE
@@ -58,7 +60,12 @@ def executor_socket(
     monkeypatch: pytest.MonkeyPatch, run_workspace: Path, run_config: CatalogRun,
 ) -> Iterator[Path]:
     unix_path = run_workspace / "executor.sock"
-    monkeypatch.setattr(executor_app.state, "catalog_run", run_config, raising=False)
+    config = ExecutorConfig(
+        binary=run_config.binary, state_dir=run_config.state_dir, model=run_config.model,
+        api_key=run_config.api_key, workspace_root=run_config.workspace_root,
+    )
+    setup = ExecutorSetup(config.workspace_root, config.state_dir, {"codex": codex_agent(config)})
+    monkeypatch.setattr(executor_app.state, "setup", setup, raising=False)
     selections = WorkspaceSelections(new_id=lambda: WORKSPACE_ID)
     selections.remember(run_config.workspace)
     monkeypatch.setattr(executor, "workspace_selections", selections)

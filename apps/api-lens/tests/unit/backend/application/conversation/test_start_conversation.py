@@ -19,6 +19,12 @@ SELECTION = UUID("11111111-1111-4111-8111-111111111111")
 class Executor:
     def __init__(self) -> None:
         self.checked: list[str] = []
+        self.agents: list[str] = []
+
+    def check_agent(self, agent: str) -> None:
+        self.agents.append(agent)
+        if agent != "codex":
+            raise PromptRefused("agent_unavailable")
 
     def selected_folder(self, selection_id: UUID) -> str:
         assert selection_id == SELECTION
@@ -54,3 +60,15 @@ def test_a_prompt_without_a_usable_folder_saves_nothing(tmp_path: Path, folder, 
     with pytest.raises(PromptRefused, match=refusal):
         StartConversation(ConversationStore(tmp_path), Executor).execute("hello", folder)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_an_unavailable_agent_saves_nothing(tmp_path: Path) -> None:
+    use_case = StartConversation(ConversationStore(tmp_path), Executor)
+    with pytest.raises(PromptRefused, match="agent_unavailable"):
+        use_case.execute("hello", SelectedFolder(SELECTION), "claude_code")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_conversation_saved_before_the_choice_belongs_to_codex() -> None:
+    saved = '{"prompt": "old", "workspace": "/work", "submitted_at": "2026-11-20T10:00:00Z"}'
+    assert RunSession.model_validate_json(saved).agent == "codex"

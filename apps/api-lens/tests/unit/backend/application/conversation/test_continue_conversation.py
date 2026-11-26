@@ -18,6 +18,10 @@ THREAD = UUID("11111111-1111-4111-8111-111111111111")
 class Gate:
     def __init__(self, on_check=lambda: None) -> None:
         self.on_check = on_check
+        self.agents: list[str] = []
+
+    def check_agent(self, agent: str) -> None:
+        self.agents.append(agent)
 
     def check_workspace(self, workspace: str) -> None:
         self.on_check()
@@ -64,3 +68,28 @@ def test_losing_the_link_to_a_concurrent_prompt_discards_the_new_turn(tmp_path: 
     with pytest.raises(PromptRefused, match="already_continued"):
         ContinueConversation(store, lambda: Gate(rival_links_first)).execute(origin.run_id, "next")
     assert sorted(tmp_path.iterdir()) == sorted([origin.directory, rivals[0].directory])
+
+
+def test_the_new_turn_uses_the_agent_that_owns_the_session(tmp_path: Path) -> None:
+    store = ConversationStore(tmp_path)
+    origin = store.create(RunSession(
+        prompt="first", workspace="/work", submitted_at=datetime.now(UTC), agent="claude_code",
+    ))
+    origin.write_result(0, thread_id=THREAD)
+    gate = Gate()
+    accepted = ContinueConversation(store, lambda: gate).execute(origin.run_id, "next")
+    session = accepted.run.read_session()
+    assert session is not None
+    assert (gate.agents, accepted.agent, session.agent) == (["claude_code"], "claude_code", "claude_code")
+
+
+def test_a_conversation_mixing_agents_is_refused(tmp_path: Path) -> None:
+    store = ConversationStore(tmp_path)
+    origin = finished_run(store)
+    other = store.create(RunSession(
+        prompt="next", workspace="/work", submitted_at=datetime.now(UTC), previous_run_id=origin.run_id,
+        agent="claude_code",
+    ))
+    origin.reserve_successor(other)
+    with pytest.raises(PromptRefused, match="run_unreadable"):
+        ContinueConversation(store, Gate).execute(other.run_id, "third")

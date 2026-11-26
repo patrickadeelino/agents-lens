@@ -14,8 +14,9 @@ from fastapi.responses import Response, StreamingResponse
 from opentelemetry.trace import Span
 
 from src.executor.agents.base import AgentAdapter, AgentRun
-from src.executor.agents.codex.adapter import CodexAdapter
-from src.executor.agents.codex.catalog_run import CatalogRun, ExecutorConfig
+from src.executor.agents.codex.adapter import CodexAdapter, codex_agent
+from src.executor.agents.codex.catalog_run import ExecutorConfig
+from src.executor.agents.configured import ConfiguredAgent, ExecutorSetup
 from src.executor.process.execution import ExecutionMessage, execution_messages
 from src.executor.workspace.workspace_folders import (
     FolderUnavailable,
@@ -24,6 +25,8 @@ from src.executor.workspace.workspace_folders import (
 )
 from src.executor.workspace.workspace_selections import WorkspaceSelections
 from src.shared.executor_protocol import (
+    AgentName,
+    AvailableAgents,
     ExecutorRequest,
     FolderListing,
     FolderRequest,
@@ -45,50 +48,63 @@ execution_lock = asyncio.Lock()
 workspace_selections = WorkspaceSelections()
 
 
-def configured_run() -> ExecutorConfig:
-    run = getattr(app.state, "catalog_run", None)
-    if not isinstance(run, ExecutorConfig):
+def configured_setup() -> ExecutorSetup:
+    setup = getattr(app.state, "setup", None)
+    if not isinstance(setup, ExecutorSetup) or not setup.agents:
         event_log("executor.rejected", "executor", "rejected", error_code="executor_unconfigured")
         raise HTTPException(status_code=503, detail="Executor is not configured.")
-    return run
+    return setup
 
 
-def checked_workspace(path: Path, run: ExecutorConfig) -> Path:
+def configured_agent(setup: ExecutorSetup, name: AgentName) -> ConfiguredAgent:
+    agent = setup.agents.get(name)
+    if agent is None:
+        event_log("executor.rejected", "executor", "rejected", error_code="agent_unavailable")
+        raise HTTPException(status_code=409, detail="This agent is not configured.")
+    return agent
+
+
+def checked_workspace(path: Path, setup: ExecutorSetup) -> Path:
     try:
         resolved = path.resolve(strict=True)
         if not resolved.is_dir():
             raise ValueError("Workspace is not a directory.")
     except (OSError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=409, detail="Workspace directory is unavailable.") from error
-    if not resolved.is_relative_to(run.workspace_root):
+    if not resolved.is_relative_to(setup.workspace_root):
         raise HTTPException(status_code=409, detail="Workspace directory is outside the workspace root.")
-    for private in (run.state_dir, run.state_dir.parent / "ipc"):
+    for private in (setup.state_dir, setup.state_dir.parent / "ipc"):
         if resolved.is_relative_to(private) or private.is_relative_to(resolved):
             raise HTTPException(status_code=409, detail="Workspace overlaps private executor files.")
     return resolved
 
 
-def confirmed_workspace(path: Path, run: ExecutorConfig) -> Path:
-    if checked_workspace(path, run) != path:
+def confirmed_workspace(path: Path, setup: ExecutorSetup) -> Path:
+    if checked_workspace(path, setup) != path:
         raise HTTPException(status_code=409, detail="Workspace directory changed.")
     return path
 
 
 @app.get("/ready", status_code=204)
 def readiness() -> Response:
-    configured_run()
+    configured_setup()
     return Response(status_code=204)
+
+
+@app.get("/agents")
+def list_agents() -> AvailableAgents:
+    return AvailableAgents(agents=list(configured_setup().agents))
 
 
 @app.post("/workspace-check", status_code=204)
 def validate_workspace(request: WorkspaceCheck) -> Response:
-    confirmed_workspace(Path(request.workspace), configured_run())
+    confirmed_workspace(Path(request.workspace), configured_setup())
     return Response(status_code=204)
 
 
 @app.get("/folders")
 def browse_folders(path: str = "") -> FolderListing:
-    root = configured_run().workspace_root
+    root = configured_setup().workspace_root
     try:
         directory = resolve_folder(root, path)
         folders, truncated = list_folders(directory)
@@ -103,9 +119,9 @@ def browse_folders(path: str = "") -> FolderListing:
 
 @app.post("/folders")
 def select_folder(folder: FolderRequest) -> WorkspaceSelection:
-    run = configured_run()
+    setup = configured_setup()
     try:
-        resolved = checked_workspace(resolve_folder(run.workspace_root, folder.path), run)
+        resolved = checked_workspace(resolve_folder(setup.workspace_root, folder.path), setup)
     except FolderUnavailable as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return WorkspaceSelection(id=workspace_selections.remember(resolved), path=str(resolved))
@@ -116,7 +132,7 @@ def get_workspace(selection_id: UUID) -> WorkspaceSelection:
     path = workspace_selections.find(selection_id)
     if path is None:
         raise HTTPException(status_code=404, detail="Workspace selection expired.")
-    return WorkspaceSelection(id=selection_id, path=str(confirmed_workspace(path, configured_run())))
+    return WorkspaceSelection(id=selection_id, path=str(confirmed_workspace(path, configured_setup())))
 
 
 class FirstEventMark:
@@ -161,13 +177,11 @@ async def stream_process(
 
 @app.post("/run", response_class=StreamingResponse)
 async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
-    config = configured_run()
-    run = CatalogRun(
-        binary=config.binary, state_dir=config.state_dir, model=config.model, api_key=config.api_key,
-        workspace_root=config.workspace_root, workspace=confirmed_workspace(Path(request.workspace), config),
-    )
+    setup = configured_setup()
+    agent = configured_agent(setup, request.agent)
+    run = agent.run_in(confirmed_workspace(Path(request.workspace), setup))
     return ClosingStreamingResponse(
-        stream_process(run, request),
+        stream_process(run, request, agent.adapter),
         media_type="application/x-ndjson",
     )
 
@@ -188,13 +202,14 @@ def main() -> None:
     workspace_root = args.workspace_root.resolve()
     if not workspace_root.is_dir():
         parser.error("The workspace root must be an existing folder.")
-    app.state.catalog_run = ExecutorConfig(
+    codex = ExecutorConfig(
         binary=args.codex_bin.resolve(strict=True),
         state_dir=state_dir,
         model=args.model,
         api_key=key,
         workspace_root=workspace_root,
     )
+    app.state.setup = ExecutorSetup(workspace_root, state_dir, {"codex": codex_agent(codex)})
     uvicorn.run(app, uds=str(socket), access_log=False)
 
 

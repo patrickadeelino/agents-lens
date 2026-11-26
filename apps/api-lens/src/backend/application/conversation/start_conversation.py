@@ -6,12 +6,14 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
+from src.shared.executor_protocol import DEFAULT_AGENT, AgentName
+
 from .prompt_rules import (
     ActivityLog,
+    ExecutorGate,
     PromptRefused,
     RunCreator,
     SessionReader,
-    WorkspaceGate,
     create_run,
     reject_while_running,
     saved_workspace,
@@ -36,7 +38,7 @@ class FolderOfRun:
 type FolderChoice = SelectedFolder | FolderOfRun
 
 
-class FolderGate(WorkspaceGate, Protocol):
+class FolderGate(ExecutorGate, Protocol):
     def selected_folder(self, selection_id: UUID) -> str:
         """Return the chosen path, raising PromptRefused when the selection cannot be used."""
         ...
@@ -57,12 +59,17 @@ class StartConversation[Run]:
         self._store = store
         self._executor = executor
 
-    def execute(self, prompt: str, folder: FolderChoice | None) -> StartedConversation[Run]:
-        """Settle the folder before saving anything."""
+    def execute(
+        self, prompt: str, folder: FolderChoice | None, agent: AgentName = DEFAULT_AGENT,
+    ) -> StartedConversation[Run]:
+        """Settle the folder and the agent before saving anything."""
         reject_while_running(self._store)
         executor = self._executor()
         workspace = self._workspace(executor, folder)
-        run = create_run(self._store, RunSession(prompt=prompt, submitted_at=datetime.now(UTC), workspace=workspace))
+        executor.check_agent(agent)
+        run = create_run(self._store, RunSession(
+            prompt=prompt, submitted_at=datetime.now(UTC), workspace=workspace, agent=agent,
+        ))
         return StartedConversation(run, workspace)
 
     def _workspace(self, executor: FolderGate, folder: FolderChoice | None) -> str:

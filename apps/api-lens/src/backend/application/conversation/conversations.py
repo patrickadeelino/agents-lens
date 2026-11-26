@@ -18,6 +18,7 @@ from src.backend.application.conversation.run_continuation import (
 from src.backend.domain.conversation.lineage import ancestors, descendants
 from src.backend.domain.turn.turn_outcome import turn_status
 from src.backend.domain.turn.turn_summary import TurnSummary
+from src.shared.executor_protocol import AgentName
 from src.shared.observability import event_log
 
 
@@ -43,6 +44,7 @@ class ThreadSummary:
     last_activity_at: datetime
     status: str
     workspace: str
+    agent: AgentName
 
 
 @dataclass(frozen=True)
@@ -105,13 +107,15 @@ class Conversations[Run: ConversationRun]:
             if child_result and (child_result.conflicting_thread_id is not None or
                                  child_result.thread_id not in (None, thread_id)):
                 raise ValueError("Conflicting conversation identity.")
+        if any(child and child.agent != session.agent for child in sessions):
+            raise ValueError("Conflicting conversation agent.")
         turns = [self._turn(*saved, details=details) for saved in zip(chain, sessions, results, strict=True)]
         dates = [date for turn in turns for date in (turn.submitted_at, turn.finished_at) if date is not None]
         latest = turns[-1]
         continuation = describe_continuation(latest.run_id, chain[-1], results[-1])
         return ThreadDetail(thread_id, turns[0].run_id, latest.run_id,
                             preview(turns[0].prompt, 80), preview(latest.prompt, 140), max(dates),
-                            latest.status, session.workspace, turns, continuation)
+                            latest.status, session.workspace, session.agent, turns, continuation)
 
     def _scan(self) -> _Scan:
         """Project every conversation, leaving out the damaged ones without failing the others."""
@@ -137,7 +141,8 @@ class Conversations[Run: ConversationRun]:
         threads.sort(key=lambda thread: thread.root_run_id)
         threads.sort(key=lambda thread: thread.last_activity_at.timestamp(), reverse=True)
         return ThreadList([ThreadSummary(t.thread_id, t.root_run_id, t.latest_run_id, t.title, t.preview,
-                                         t.last_activity_at, t.status, t.workspace) for t in threads], scan.unavailable)
+                                         t.last_activity_at, t.status, t.workspace, t.agent) for t in threads],
+                          scan.unavailable)
 
     def by_run(self, run_id: str) -> ThreadDetail | None:
         capture = self.store.find(run_id)
