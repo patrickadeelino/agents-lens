@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from src.application.conversation_ports import (
+    ConversationRepository,
+    ConversationResult,
+    ConversationRun,
+)
 from src.application.run_continuation import ContinuationInfo, describe_continuation
 from src.application.run_history import GetRunHistory
 from src.domain.trace_reader import read_timed_trace
 from src.domain.turn_summary import TurnSummary
-from src.infrastructure.capture_files import CaptureFiles, SavedResult
-from src.infrastructure.conversation_store import ConversationStore
 from src.observability import event_log
 
 
@@ -52,7 +55,7 @@ def preview(text: str | None, limit: int) -> str | None:
     return " ".join(text.split())[:limit] or None
 
 
-def legacy_summary(capture: CaptureFiles, finished: bool) -> tuple[str | None, str | None]:
+def legacy_summary(capture: ConversationRun, finished: bool) -> tuple[str | None, str | None]:
     reply = None
     last_turn = None
     try:
@@ -85,11 +88,11 @@ class _Scan:
     duplicated: set[UUID]
 
 
-class Conversations:
-    def __init__(self, store: ConversationStore) -> None:
+class Conversations[Run: ConversationRun]:
+    def __init__(self, store: ConversationRepository[Run]) -> None:
         self.store = store
 
-    def _turn(self, capture: CaptureFiles, *, details: bool) -> Turn:
+    def _turn(self, capture: Run, *, details: bool) -> Turn:
         session = capture.read_session()
         result = capture.read_result()
         reply = result.assistant_markdown if result else None
@@ -97,25 +100,25 @@ class Conversations:
         if details and result and result.finished_at is None:
             reply, last_turn = legacy_summary(capture, True)
         status = self._status(capture, result, last_turn)
-        return Turn(capture.directory.name, session.prompt if session else None, reply,
+        return Turn(capture.run_id, session.prompt if session else None, reply,
                     session.submitted_at if session else None, result.finished_at if result else None,
                     result.exit_code if result else None, status, result.summary if result and details else None)
 
     @staticmethod
-    def _status(capture: CaptureFiles, result: SavedResult | None, last_turn: str | None) -> str:
+    def _status(capture: ConversationRun, result: ConversationResult | None, last_turn: str | None) -> str:
         if capture.is_active():
             return "active"
         if result is None:
             return "unconfirmed"
         return GetRunHistory._run_status(last_turn, result.exit_code, result.capture_failed)
 
-    def _project(self, root: CaptureFiles, *, details: bool) -> ThreadDetail | None:
+    def _project(self, root: Run, *, details: bool) -> ThreadDetail | None:
         session = root.read_session()
         result = root.read_result()
         thread_id = result.thread_id if result and result.persistence_confirmed else None
         if thread_id is None and (session is None or session.prompt is None):
             return None
-        if result is None and not root.is_active() and not (root.directory / "events.timed.jsonl").is_file():
+        if result is None and not root.is_active() and not root.has_trace():
             return None
         chain = self.store.lineage(root)
         for child in chain[1:]:

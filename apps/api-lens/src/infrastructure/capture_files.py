@@ -55,6 +55,13 @@ class CaptureFiles:
             raise FileNotFoundError("Capture directory does not exist.")
         return cls(directory)
 
+    @property
+    def run_id(self) -> str:
+        return self.directory.name
+
+    def has_trace(self) -> bool:
+        return (self.directory / TRACE_NAME).is_file()
+
     def open_trace(self) -> TextIO:
         return (self.directory / TRACE_NAME).open("x", encoding="utf-8")
 

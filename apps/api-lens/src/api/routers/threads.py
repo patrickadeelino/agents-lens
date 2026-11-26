@@ -7,12 +7,13 @@ from fastapi import APIRouter, HTTPException, Response
 from src.api import dependencies
 from src.api.dependencies import RunIdPath
 from src.application.conversations import Conversations, ThreadDetail, ThreadList
+from src.infrastructure.capture_files import CaptureFiles
 from src.infrastructure.conversation_store import ConversationStore
 
 router = APIRouter()
 
 
-def service() -> Conversations:
+def service() -> Conversations[CaptureFiles]:
     return Conversations(ConversationStore(dependencies.CAPTURE_ROOT))
 
 
