@@ -83,7 +83,9 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 **Disconnects do not stop the work.** The capture keeps recording if the browser goes away. The browser comes back with the ID of the last event it received and [reads from there](apps/api-lens/src/backend/application/history/run_subscription.py). Integration tests cover [the disconnect](apps/api-lens/tests/integration/test_runs.py) and [the resume](apps/api-lens/tests/integration/test_run_history.py).
 
-**Follow-ups stay on one thread.** A follow-up resumes the Codex thread of the latest run, and each run accepts [a single successor](apps/api-lens/src/backend/infrastructure/storage/capture_files.py), so two requests cannot fork a conversation. Token counts of a resumed turn exclude the earlier turns.
+**Follow-ups stay on one thread.** A follow-up resumes the Codex thread of the latest run, and each run accepts [a single successor](apps/api-lens/src/backend/infrastructure/storage/capture_files.py), so two requests cannot fork a conversation. A turn that failed without confirming its session can still be continued: the follow-up resumes the thread of the nearest earlier turn that confirmed one. If the first turn fails that way, there is no thread to resume. Token counts of a resumed turn exclude the earlier turns.
+
+**One damaged conversation stays isolated.** A conversation whose files cannot be read is [left out of the list](apps/api-lens/src/backend/application/conversation/conversations.py), and the history shows how many were skipped. The others can still be opened and continued.
 
 **Subagents arrive out of order.** A child's events can show up before the notification that links it to its parent. The executor [holds them briefly](apps/api-lens/src/executor/codex/app_server_delegation.py), within time, count and size limits, and marks a branch that never finished as an incomplete capture.
 
@@ -98,7 +100,10 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 - The **executor container runs with AppArmor and seccomp disabled**. It has no Linux capabilities, cannot gain privileges and runs as a regular user, but it is less isolated from your machine than a default container.
 - The API key is passed to the executor as a Compose secret and masked if it appears in an event. A `.env` file keeps it in plain text on disk.
 - Prompts, command output and captures are stored unencrypted. Review them before sharing screenshots or recordings.
-- The executor handles one turn at a time. An event larger than 8 MiB ends the capture, keeping what was already saved.
+- The executor handles one turn at a time. While a turn runs, the interface keeps sending disabled and the API refuses new prompts. If two prompts arrive at the same instant, the executor rejects one, which is saved as a failed turn that can be retried. A tab that was already open learns about the running turn when it gets the focus or tries to send.
+- **Restarting the API during a turn leaves that conversation unable to continue.** The saved turns stay available.
+- A turn fails if the executor sends nothing for 120 seconds.
+- An event larger than 8 MiB ends the capture, keeping what was already saved.
 - Tested on Linux x86_64 with kernel 5.15, Codex **0.171.0** and `gpt-6.2-sol`. macOS, Windows and ARM have not been tested. On Ubuntu 23.10 or later, the host may restrict the user namespaces the sandbox needs.
 
 Set `AGENT_LENS_MODEL` to use another model. The [optional observability setup](observability/README.md) adds logs and traces.
@@ -110,6 +115,8 @@ Set `AGENT_LENS_MODEL` to use another model. The [optional observability setup](
 ## Development
 
 Only needed to change the code. To run Agent Lens you need Docker, plus an API key for live runs.
+
+The API code has two services under [`apps/api-lens/src`](apps/api-lens/src): `backend` (HTTP API, saved captures and history) and `executor` (Codex process and folders). They meet only through `shared`. Tests keep these [boundaries](apps/api-lens/tests/unit/test_layers.py) and a limit of [30 lines per function](apps/api-lens/tests/unit/test_function_size.py), and Ruff allows two nested blocks at most.
 
 <details>
 <summary>Lint, type checks, tests and build</summary>
