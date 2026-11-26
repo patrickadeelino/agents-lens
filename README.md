@@ -93,6 +93,15 @@ A turn runs like this: the browser sends the prompt, the API creates a capture a
 
 **A local app is still reachable from the web.** Without a `Host` check, a malicious page could use DNS rebinding to talk to an API on your machine. Nginx and the API accept only local names, and [tests](apps/api-lens/tests/integration/backend/test_local_access.py) cover prompts sent from other origins without a CORS preflight.
 
+## Decisions
+
+The main choices, with their alternatives and costs:
+
+- [Save observed events and derive the state from them](docs/decisions/0001-observed-events-and-projections.md)
+- [Keep one capture per turn](docs/decisions/0002-one-capture-per-turn.md)
+- [Drive Codex through App Server](docs/decisions/0003-codex-through-app-server.md)
+- [Run the executor as an isolated service](docs/decisions/0004-isolate-the-executor.md)
+
 ## Security and limitations
 
 - The interface listens on loopback, accepts only the `localhost` and `127.0.0.1` host names and **has no authentication**. Do not expose it to a network.
