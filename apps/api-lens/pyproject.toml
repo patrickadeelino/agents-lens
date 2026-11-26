@@ -33,6 +33,11 @@ extend-select = ["C901", "E402", "I", "PLC0415"]
 [tool.ruff.lint.mccabe]
 max-complexity = 6
 
+[tool.ruff.lint.pylint]
+# Every block counts: if, for, while, with and try. The rule (PLR1702) is still in preview, so it runs
+# as its own command: enabling preview here would also change the other rules.
+max-nested-blocks = 2
+
 [tool.mypy]
 python_version = "3.13"
 files = ["src", "tests"]

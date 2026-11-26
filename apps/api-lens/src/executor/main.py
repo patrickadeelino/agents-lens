@@ -3,17 +3,18 @@
 import argparse
 import asyncio
 import sys
-from collections.abc import AsyncGenerator
-from contextlib import aclosing
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import uvicorn
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
+from opentelemetry.trace import Span
 
 from src.executor.codex.catalog_run import CatalogRun, ExecutorConfig
-from src.executor.process.execution import execution_messages
+from src.executor.process.execution import ExecutionMessage, execution_messages
 from src.executor.workspace.workspace_folders import (
     FolderUnavailable,
     list_folders,
@@ -117,22 +118,42 @@ def get_workspace(selection_id: UUID) -> WorkspaceSelection:
     return WorkspaceSelection(id=selection_id, path=str(confirmed_workspace(path, configured_run())))
 
 
+class FirstEventMark:
+    """Mark on the span the moment the first Codex event leaves the executor."""
+
+    def __init__(self, span: Span) -> None:
+        self._span = span
+        self._marked = False
+
+    def observe(self, message: ExecutionMessage) -> None:
+        if self._marked or not isinstance(message, RunOutput):
+            return
+        self._span.add_event("executor.stream.first_event_sent")
+        self._marked = True
+
+
+@asynccontextmanager
+async def traced_execution(
+    run: CatalogRun, request: ExecutorRequest,
+) -> AsyncIterator[tuple[Span, AsyncGenerator[ExecutionMessage]]]:
+    """Open the execution span and its messages; the messages close before the span ends."""
+    with operation_span("codex.subprocess") as span:
+        async with aclosing(execution_messages(run, request, span)) as messages:
+            yield span, messages
+
+
 async def stream_process(run: CatalogRun, request: ExecutorRequest) -> AsyncGenerator[str]:
     if execution_lock.locked():
         event_log("executor.rejected", "executor", "rejected", error_code="executor_busy")
         yield RunExit(exit_code=None).model_dump_json() + "\n"
         return
 
-    async with execution_lock:
-        with operation_span("codex.subprocess") as span:
-            first_event_sent = False
-            async with aclosing(execution_messages(run, request, span)) as messages:
-                async for message in messages:
-                    yield message.model_dump_json() + "\n"
-                    # The iterator resumes after ASGI accepts the response body.
-                    if not first_event_sent and isinstance(message, RunOutput):
-                        span.add_event("executor.stream.first_event_sent")
-                        first_event_sent = True
+    async with execution_lock, traced_execution(run, request) as (span, messages):
+        first_event = FirstEventMark(span)
+        async for message in messages:
+            yield message.model_dump_json() + "\n"
+            # The iterator resumes after ASGI accepts the response body.
+            first_event.observe(message)
 
 
 @app.post("/run", response_class=StreamingResponse)

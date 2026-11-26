@@ -28,6 +28,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv run --locked ruff check .
+      - run: uv run --locked ruff check --preview --select PLR1702 .
       - run: uv run --locked mypy .
       - run: uv run --locked coverage run -m pytest -q
       # Fails below the minimum set in pyproject.toml.

@@ -118,6 +118,7 @@ The checks make no model calls. They need `uv`, Python 3.13 and Node.js 24. Run 
 
 ```sh
 uv run --directory apps/api-lens --locked ruff check .
+uv run --directory apps/api-lens --locked ruff check --preview --select PLR1702 .
 uv run --directory apps/api-lens --locked mypy .
 uv run --directory apps/api-lens --locked coverage run -m pytest -q
 uv run --directory apps/api-lens --locked coverage report
