@@ -10,7 +10,11 @@ from src.application.conversation_ports import (
     ConversationResult,
     ConversationRun,
 )
-from src.application.run_continuation import ContinuationInfo, describe_continuation
+from src.application.run_continuation import (
+    ContinuationInfo,
+    RunSession,
+    describe_continuation,
+)
 from src.domain.lineage import ancestors, descendants
 from src.domain.turn_outcome import turn_status
 from src.domain.turn_summary import TurnSummary
@@ -68,11 +72,10 @@ class Conversations[Run: ConversationRun]:
     def __init__(self, store: ConversationRepository[Run]) -> None:
         self.store = store
 
-    def _turn(self, capture: Run, *, details: bool) -> Turn:
-        session = capture.read_session()
+    def _turn(self, capture: Run, session: RunSession | None, result: ConversationResult | None, *,
+              details: bool) -> Turn:
         if session is None:
             raise ValueError("Conversation turn has no session.")
-        result = capture.read_result()
         status = self._status(capture, result, result.last_turn if result else None)
         return Turn(capture.run_id, session.prompt, result.assistant_markdown if result else None,
                     session.submitted_at, result.finished_at if result else None,
@@ -95,15 +98,17 @@ class Conversations[Run: ConversationRun]:
         if result is None and not root.is_active() and not root.has_trace():
             return None
         chain = list(descendants(root))
-        for child in chain[1:]:
-            child_result = child.read_result()
+        # Each file is read once, so every field below describes the same moment of a run.
+        sessions = [session, *(child.read_session() for child in chain[1:])]
+        results = [result, *(child.read_result() for child in chain[1:])]
+        for child_result in results[1:]:
             if child_result and (child_result.conflicting_thread_id is not None or
                                  child_result.thread_id not in (None, thread_id)):
                 raise ValueError("Conflicting conversation identity.")
-        turns = [self._turn(capture, details=details) for capture in chain]
+        turns = [self._turn(*saved, details=details) for saved in zip(chain, sessions, results, strict=True)]
         dates = [date for turn in turns for date in (turn.submitted_at, turn.finished_at) if date is not None]
         latest = turns[-1]
-        continuation = describe_continuation(latest.run_id, chain[-1], chain[-1].read_result())
+        continuation = describe_continuation(latest.run_id, chain[-1], results[-1])
         return ThreadDetail(thread_id, turns[0].run_id, latest.run_id,
                             preview(turns[0].prompt, 80), preview(latest.prompt, 140), max(dates),
                             latest.status, session.workspace, turns, continuation)
@@ -148,7 +153,8 @@ class Conversations[Run: ConversationRun]:
         scan = self._scan()
         for thread in scan.threads:
             if thread.thread_id == thread_id:
-                return self.by_run(thread.root_run_id)
+                # The scan already ruled out duplicates; only the turn details are missing.
+                return self._project(self.store.find(thread.root_run_id), details=True)
         # With damaged captures, a missing thread cannot be told apart from an unreadable one.
         if scan.unavailable:
             raise ValueError("Conversation may be unreadable.")

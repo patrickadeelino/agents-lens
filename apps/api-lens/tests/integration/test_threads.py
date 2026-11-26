@@ -93,3 +93,28 @@ def test_bad_successor_does_not_merge_conversations(tmp_path: Path, monkeypatch)
         assert listing["unavailable"] == 1
         assert client.get(f"/threads/by-run/{first.directory.name}").status_code == 503
         assert client.post(f"/runs/{first.directory.name}/continue", json={"prompt": "Next"}).status_code == 503
+
+
+def test_opening_by_thread_reads_each_result_once(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(dependencies, "CAPTURE_ROOT", tmp_path)
+    thread = "11111111-1111-4111-8111-111111111111"
+    first = saved(tmp_path, "first", thread, datetime(2026, 1, 1, tzinfo=UTC))
+    second = saved(tmp_path, "second", thread, datetime(2026, 1, 2, tzinfo=UTC))
+    first.reserve_successor(second)
+    second_session = second.read_session()
+    assert second_session is not None
+    (second.directory / "session.json").write_text(
+        second_session.model_copy(update={"previous_run_id": first.run_id}).model_dump_json(), encoding="utf-8")
+    reads: list[str] = []
+    read_result = CaptureFiles.read_result
+
+    def counted(capture: CaptureFiles):
+        reads.append(capture.run_id)
+        return read_result(capture)
+
+    monkeypatch.setattr(CaptureFiles, "read_result", counted)
+    with TestClient(app, base_url="http://localhost") as client:
+        assert client.get(f"/threads/{thread}").status_code == 200
+    # One pass to find the thread and one to load its details.
+    assert sorted(reads) == sorted([first.run_id, second.run_id] * 2)
+
