@@ -2,7 +2,7 @@
 
 from asyncio import sleep
 from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -56,22 +56,36 @@ class SubscribeToRun:
     async def _follow(
         self, capture: RunSubscriptionSource, after: int,
     ) -> AsyncGenerator[SubscriptionMessage]:
-        event_id = 0
-        try:
-            with capture.open_tail() as tail:
-                while True:
-                    message = await tail.read()
-                    if message is None:
-                        yield None
-                        await sleep(0.1)
-                        continue
-                    if not isinstance(message, str):
-                        yield SubscriptionEnded(
-                            message.exit_code, "result_unconfirmed" if message.exit_code is None else None,
-                        )
-                        return
-                    event_id += 1
-                    if event_id > after:
-                        yield HistoryEvent(event_id, TimedEvent.model_validate_json(message))
-        except (OSError, ValueError):
-            yield SubscriptionEnded(None, "capture_unavailable")
+        cursor = TailCursor(after)
+        with suppress(OSError, ValueError), capture.open_tail() as tail:
+            while not cursor.ended:
+                yield await cursor.read(tail)
+            return
+        # Reached only when reading failed.
+        yield SubscriptionEnded(None, "capture_unavailable")
+
+
+class TailCursor:
+    """Number the records of one tail and report those after the subscriber's position."""
+
+    def __init__(self, after: int) -> None:
+        self.ended = False
+        self._after = after
+        self._event_id = 0
+        self._paused = False
+
+    async def read(self, tail: RunTail) -> SubscriptionMessage:
+        if self._paused:
+            await sleep(0.1)
+        message = await tail.read()
+        while isinstance(message, str):
+            self._event_id += 1
+            if self._event_id > self._after:
+                self._paused = False
+                return HistoryEvent(self._event_id, TimedEvent.model_validate_json(message))
+            message = await tail.read()
+        self._paused = message is None
+        if message is None:
+            return None
+        self.ended = True
+        return SubscriptionEnded(message.exit_code, "result_unconfirmed" if message.exit_code is None else None)

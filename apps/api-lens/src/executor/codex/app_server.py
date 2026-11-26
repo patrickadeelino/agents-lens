@@ -57,6 +57,19 @@ def usage_delta(total: Json, baseline: Json) -> Json:
     }
 
 
+def answers(message: Json, request_id: int) -> bool:
+    return message.get("id") == request_id and "method" not in message
+
+
+def hold_notification(message: Json, pending: list[Json] | None) -> None:
+    """Keep a notification that arrived before the reply, up to a limit."""
+    if pending is None or "id" in message:
+        return
+    pending.append(message)
+    if len(pending) > 128:
+        raise AppServerError
+
+
 class AppServerTurn:
     def __init__(self, stdin: asyncio.StreamWriter, stdout: asyncio.StreamReader) -> None:
         self.stdin = stdin
@@ -87,14 +100,11 @@ class AppServerTurn:
 
     async def reply(self, request_id: int, pending: list[Json] | None = None) -> Json:
         async with asyncio.timeout(30):
-            while True:
+            message = await self.receive()
+            while not answers(message, request_id):
+                hold_notification(message, pending)
                 message = await self.receive()
-                if message.get("id") == request_id and "method" not in message:
-                    return request_result(message)
-                if pending is not None and "id" not in message:
-                    pending.append(message)
-                    if len(pending) > 128:
-                        raise AppServerError
+            return request_result(message)
 
     async def authenticate(self, api_key: str) -> None:
         await self.send("account/login/start", {"type": "apiKey", "apiKey": api_key}, 3)
@@ -182,19 +192,19 @@ class AppServerTurn:
 
     async def notifications(self, capture: DelegationCapture, pending: list[Json]) -> AsyncIterator[Notification]:
         initial = deque(pending)
-        clock = asyncio.get_running_loop()
         while self.exit_code is None:
-            try:
-                async with asyncio.timeout_at(capture.deadline):
-                    message = initial.popleft() if initial else await self.receive()
-            except TimeoutError:
-                for accepted in capture.flush():
-                    yield accepted
-                continue
-            note = Notification.from_message(message)
-            if note is not None:
-                for accepted in capture.offer(note, clock.time()):
-                    yield accepted
+            for accepted in await self.next_notifications(capture, initial):
+                yield accepted
+
+    async def next_notifications(self, capture: DelegationCapture, initial: deque[Json]) -> list[Notification]:
+        """Take one message, or release what the capture holds once its deadline passes."""
+        try:
+            async with asyncio.timeout_at(capture.deadline):
+                message = initial.popleft() if initial else await self.receive()
+        except TimeoutError:
+            return capture.flush()
+        note = Notification.from_message(message)
+        return [] if note is None else capture.offer(note, asyncio.get_running_loop().time())
 
     async def events(self, run: CatalogRun, request: ExecutorRequest) -> AsyncIterator[Json]:
         thread_id = await self.open_thread(run, request)

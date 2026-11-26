@@ -2,8 +2,8 @@
 
 import os
 from asyncio import CancelledError
-from collections.abc import AsyncGenerator
-from contextlib import aclosing
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import aclosing, contextmanager
 from dataclasses import dataclass, field
 from time import monotonic_ns
 from typing import Annotated
@@ -91,6 +91,23 @@ async def run_frames(
             delivery.end_sent(message)
 
 
+@contextmanager
+def finishing_delivery(delivery: RunSseDelivery, span: Span) -> Iterator[None]:
+    """Record how the delivery ended, whatever interrupted it."""
+    delivery.span = span
+    outcome: Outcome = "failed"
+    error_code: str | None = "sse_delivery_failed"
+    try:
+        yield
+    except (CancelledError, ClientDisconnect, OSError):
+        outcome, error_code = "disconnected", "client_disconnected"
+        raise
+    else:
+        outcome, error_code = "completed", None
+    finally:
+        delivery.finish(outcome, error_code)
+
+
 class RunStreamingResponse(StreamingResponse):
     def __init__(self, capture: CaptureRun) -> None:
         self._delivery = RunSseDelivery()
@@ -101,21 +118,10 @@ class RunStreamingResponse(StreamingResponse):
 
     async def stream_response(self, send: Send) -> None:
         # The capture worker inherits POST /runs, independently of the SSE span.
-        with operation_span("run.sse", activate=False) as span:
-            self._delivery.span = span
-            outcome: Outcome = "failed"
-            error_code: str | None = "sse_delivery_failed"
-            try:
-                async with self._capture.subscribe() as messages, aclosing(run_frames(messages, self._delivery)) as frames:
-                    self.body_iterator = frames
-                    await super().stream_response(send)
-            except (CancelledError, ClientDisconnect, OSError):
-                outcome, error_code = "disconnected", "client_disconnected"
-                raise
-            else:
-                outcome, error_code = "completed", None
-            finally:
-                self._delivery.finish(outcome, error_code)
+        with operation_span("run.sse", activate=False) as span, finishing_delivery(self._delivery, span):
+            async with self._capture.subscribe() as messages, aclosing(run_frames(messages, self._delivery)) as frames:
+                self.body_iterator = frames
+                await super().stream_response(send)
 
 
 RUN_RESPONSE: dict[int | str, dict[str, object]] = {

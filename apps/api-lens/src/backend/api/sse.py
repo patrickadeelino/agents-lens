@@ -33,19 +33,25 @@ class RunSubscriptionResponse(ClosingStreamingResponse):
         super().__init__(self._encode_frames(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
     async def _encode_frames(self) -> AsyncGenerator[str]:
-        ping_at = monotonic() + self._heartbeat_seconds
         async with aclosing(self._messages) as messages:
-            async for message in messages:
-                if message is None:
-                    if monotonic() < ping_at:
-                        continue
-                    frame = ": keep-alive\n\n"
-                elif isinstance(message, HistoryEvent):
-                    frame = record_frame(message.record, event_id=message.event_id)
-                else:
-                    frame = self._encode_end(message)
+            async for frame in self._due_frames(messages):
                 yield frame
-                ping_at = monotonic() + self._heartbeat_seconds
+
+    async def _due_frames(self, messages: AsyncGenerator[SubscriptionMessage]) -> AsyncGenerator[str]:
+        """Skip the pauses that arrive before the next keep-alive is due."""
+        ping_at = monotonic() + self._heartbeat_seconds
+        async for message in messages:
+            if message is None and monotonic() < ping_at:
+                continue
+            yield self._encode(message)
+            ping_at = monotonic() + self._heartbeat_seconds
+
+    def _encode(self, message: SubscriptionMessage) -> str:
+        if message is None:
+            return ": keep-alive\n\n"
+        if isinstance(message, HistoryEvent):
+            return record_frame(message.record, event_id=message.event_id)
+        return self._encode_end(message)
 
     @staticmethod
     def _encode_end(message: SubscriptionEnded) -> str:
