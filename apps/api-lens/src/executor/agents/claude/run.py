@@ -57,8 +57,12 @@ class ClaudeRun:
 
     def environment(self) -> dict[str, str]:
         return {
-            "PATH": os.environ["PATH"],
+            # The folder of the binary also holds the bwrap its sandbox uses.
+            "PATH": f"{self.binary.parent}:{os.environ['PATH']}",
             "LANG": "C.UTF-8",
             "HOME": str(self.state_dir),
             KEY_VARIABLE: self.api_key,
+            # The version is pinned by the image, and nothing but model requests should leave the executor.
+            "DISABLE_AUTOUPDATER": "1",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         }

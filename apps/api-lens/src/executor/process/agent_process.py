@@ -16,7 +16,7 @@ MAX_EVENT_BYTES = 8 * 1024 * 1024
 async def agent_process(run: AgentRun, request: ExecutorRequest) -> AsyncIterator[Process | None]:
     """Yield a running process, or None when it cannot start. Leaving stops it and removes the directory."""
     # Codex's sandbox helper requires a short, user-owned socket directory with mode 0700.
-    with TemporaryDirectory(prefix="lens-codex-", dir="/tmp") as runtime_dir:
+    with TemporaryDirectory(prefix="lens-agent-", dir="/tmp") as runtime_dir:
         process = await start_process(run, request, runtime_dir)
         try:
             yield process

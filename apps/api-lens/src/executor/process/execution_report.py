@@ -47,8 +47,8 @@ class ExecutionReport:
             finish_span(self._span, "failed", error_code="event_too_large")
             return RunError(error="event_too_large")
         if isinstance(error, AgentRejected):
-            return self._broken("app_server_request_rejected", exit_code=1)
-        return self._broken("app_server_disconnected", exit_code=None)
+            return self._broken("agent_request_rejected", exit_code=1)
+        return self._broken("agent_disconnected", exit_code=None)
 
     def _broken(self, error_code: str, *, exit_code: int | None) -> RunExit:
         finish_span(self._span, "failed", error_code=error_code)

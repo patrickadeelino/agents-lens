@@ -55,5 +55,8 @@ def test_commands_do_not_receive_the_api_key() -> None:
 def test_the_process_receives_only_what_it_needs(monkeypatch) -> None:
     monkeypatch.setenv("UNRELATED_SECRET", "x")
     environment = RUN.environment()
-    assert set(environment) == {"PATH", "LANG", "HOME", "ANTHROPIC_API_KEY"}
+    assert set(environment) == {
+        "PATH", "LANG", "HOME", "ANTHROPIC_API_KEY", "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    }
+    assert environment["PATH"].startswith("/opt:")
     assert environment["HOME"] == "/data/state"

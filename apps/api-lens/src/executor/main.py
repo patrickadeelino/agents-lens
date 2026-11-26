@@ -1,6 +1,5 @@
 """Stream subprocess output from the executor service."""
 
-import argparse
 import asyncio
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -14,10 +13,10 @@ from fastapi.responses import Response, StreamingResponse
 from opentelemetry.trace import Span
 
 from src.executor.agents.base import AgentAdapter, AgentRun
-from src.executor.agents.codex.adapter import CodexAdapter, codex_agent
-from src.executor.agents.codex.catalog_run import ExecutorConfig
+from src.executor.agents.codex.adapter import CodexAdapter
 from src.executor.agents.configured import ConfiguredAgent, ExecutorSetup
 from src.executor.process.execution import ExecutionMessage, execution_messages
+from src.executor.startup import executor_parser, executor_setup
 from src.executor.workspace.workspace_folders import (
     FolderUnavailable,
     list_folders,
@@ -136,7 +135,7 @@ def get_workspace(selection_id: UUID) -> WorkspaceSelection:
 
 
 class FirstEventMark:
-    """Mark on the span the moment the first Codex event leaves the executor."""
+    """Mark on the span the moment the first agent event leaves the executor."""
 
     def __init__(self, span: Span) -> None:
         self._span = span
@@ -154,7 +153,8 @@ async def traced_execution(
     adapter: AgentAdapter, run: AgentRun, request: ExecutorRequest,
 ) -> AsyncIterator[tuple[Span, AsyncGenerator[ExecutionMessage]]]:
     """Open the execution span and its messages; the messages close before the span ends."""
-    with operation_span("codex.subprocess") as span:
+    with operation_span("agent.subprocess") as span:
+        span.set_attribute("agent_lens.agent", adapter.name)
         async with aclosing(execution_messages(adapter, run, request, span)) as messages:
             yield span, messages
 
@@ -187,29 +187,14 @@ async def prompt_run(request: ExecutorRequest) -> StreamingResponse:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Start the host executor on its private Unix socket.")
-    parser.add_argument("--codex-bin", required=True, type=Path)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--data-dir", required=True, type=Path, help="Private Codex state and the API socket.")
-    parser.add_argument(
-        "--workspace-root", required=True, type=Path, help="Only this folder and its subfolders can be chosen.",
-    )
+    parser = executor_parser()
     args = parser.parse_args()
-    key = sys.stdin.readline().strip()
-    if not key or not key.isascii() or any(char.isspace() for char in key):
-        parser.error("Provide the Codex API key via standard input.")
+    codex_input = [sys.stdin.readline()]
     state_dir, socket = prepare_executor_dirs(args.data_dir)
-    workspace_root = args.workspace_root.resolve()
-    if not workspace_root.is_dir():
-        parser.error("The workspace root must be an existing folder.")
-    codex = ExecutorConfig(
-        binary=args.codex_bin.resolve(strict=True),
-        state_dir=state_dir,
-        model=args.model,
-        api_key=key,
-        workspace_root=workspace_root,
-    )
-    app.state.setup = ExecutorSetup(workspace_root, state_dir, {"codex": codex_agent(codex)})
+    try:
+        app.state.setup = executor_setup(args, codex_input, state_dir)
+    except ValueError as error:
+        parser.error(str(error))
     uvicorn.run(app, uds=str(socket), access_log=False)
 
 

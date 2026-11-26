@@ -124,7 +124,7 @@ def test_run_traces_paired_commands_at_their_observed_capture_offsets(
     attrs = request_span.attributes or {}
     assert attrs["agent_lens.command.missing_start_count"] == 1
     assert attrs["agent_lens.command.missing_completion_count"] == 1
-    commands = [span for span in spans if span.name == "codex.command"]
+    commands = [span for span in spans if span.name == "agent.command"]
     assert len(commands) == 2
     durations = {
         "item_1": offsets["item_1", "item.completed"] - offsets["item_1", "item.started"],

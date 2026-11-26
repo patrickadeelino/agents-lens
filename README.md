@@ -39,7 +39,7 @@ Set `CODEX_API_KEY` in `.env`, then start everything:
 docker compose up --build --wait
 ```
 
-Open [localhost:8080](http://localhost:8080/), use **Select folder**, send a prompt and open **View trajectory** on the turn. The first build downloads the official Codex release, about 200 MB, and checks its SHA-256.
+Open [localhost:8080](http://localhost:8080/), use **Select folder**, send a prompt and open **View trajectory** on the turn. The first build downloads the official Codex release, about 200 MB, and the Claude Code binary, about 370 MB, and checks the SHA-256 of both.
 
 ```sh
 docker compose down
@@ -60,6 +60,19 @@ AGENT_LENS_WORKSPACE=/absolute/path/to/your/projects
 On Linux, if `id -u` or `id -g` is not `1000`, set `AGENT_LENS_UID` and `AGENT_LENS_GID` in `.env` before the first start, so the agent can edit your files.
 
 The agent's commands have no network access and can use `git`, `rg` and Python 3 (as `python` or `python3`). To give it other tools, add them to [`Dockerfile.executor`](apps/api-lens/Dockerfile.executor).
+
+### Claude Code (experimental)
+
+New conversations can also use Claude Code. Set both lines in `.env`, with an Anthropic API key, and start the app again:
+
+```sh
+COMPOSE_FILE=compose.yaml:compose.claude.yaml
+CLAUDE_CODE_API_KEY=your-anthropic-api-key
+```
+
+A selector then appears on the new-conversation screen, and each conversation keeps its agent. Set `AGENT_LENS_CLAUDE_MODEL` to change the model. The image downloads the official Claude Code **2.1.327** binary, unmodified, and checks its SHA-256, even when Claude Code is off.
+
+Claude Code has been tested here with recorded runs and with the real command line against a local stand-in for its API, **not yet with the model through this app**. Its commands run in Claude Code's sandbox in the nested mode that containers require, which is weaker than the default: they see the executor's process list and can read the container's system files. The keys, the executor's data and the other folders of your workspace are denied. Claude Code creates a `.claude` folder in the folder you choose.
 
 ## Architecture
 
@@ -116,10 +129,6 @@ The main choices, with their alternatives and costs:
 - Tested on Linux x86_64 with kernel 5.15, Codex **0.171.0** and `gpt-6.2-sol`. macOS, Windows and ARM have not been tested. On Ubuntu 23.10 or later, the host may restrict the user namespaces the sandbox needs.
 
 Set `AGENT_LENS_MODEL` to use another model. The [optional observability setup](observability/README.md) adds logs and traces.
-
-## Planned
-
-- Support for Claude Code.
 
 ## Development
 

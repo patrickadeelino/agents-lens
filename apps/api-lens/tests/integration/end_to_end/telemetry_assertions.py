@@ -13,7 +13,7 @@ from opentelemetry.trace import StatusCode
 
 
 def assert_live_span_tree(span_exporter: InMemorySpanExporter, run_id: str) -> dict[str, ReadableSpan]:
-    names = ["POST /runs", "run.capture", "executor.request", "POST /run", "codex.subprocess"]
+    names = ["POST /runs", "run.capture", "executor.request", "POST /run", "agent.subprocess"]
     extra = [("POST /runs", "run.sse"), ("run.capture", "capture.write_result")]
     deadline = monotonic() + 5
     while len(span_exporter.get_finished_spans()) < len(names) + len(extra):
@@ -69,7 +69,7 @@ def assert_live_log_milestones(logs: Sequence[Mapping[str, object]], run_id: str
 
 
 def assert_successful_stream_spans(spans: dict[str, ReadableSpan]) -> None:
-    subprocess_span = spans["codex.subprocess"]
+    subprocess_span = spans["agent.subprocess"]
     assert [event.name for event in subprocess_span.events] == [
         "executor.subprocess.first_event_read", "executor.stream.first_event_sent",
     ]

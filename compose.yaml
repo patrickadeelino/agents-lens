@@ -54,13 +54,14 @@ services:
     init: true
     environment:
       AGENT_LENS_MODEL: "${AGENT_LENS_MODEL:-gpt-6.2-sol}"
+      AGENT_LENS_CLAUDE_MODEL: "${AGENT_LENS_CLAUDE_MODEL:-claude-sonnet-5-5}"
       AGENT_LENS_OTEL_ENABLED: "${AGENT_LENS_OTEL_ENABLED:-0}"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     secrets:
       - codex_api_key
     cap_drop:
       - ALL
-    # Codex isolates each command with Bubblewrap, which Docker's default AppArmor and
+    # Both agents isolate commands with Bubblewrap, which Docker's default AppArmor and
     # seccomp profiles block. Only this service relaxes them. See the README.
     security_opt:
       - no-new-privileges:true

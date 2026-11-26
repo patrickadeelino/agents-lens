@@ -37,12 +37,16 @@ _RUN_HEADER = "x-agent-lens-run-id"
 
 
 _ITEM_EVENT_TYPES = frozenset({"item.started", "item.updated", "item.completed"})
-_CODEX_EVENT_TYPES = _ITEM_EVENT_TYPES | {"thread.started", "turn.started", "turn.completed", "turn.failed", "error"}
-_CODEX_ITEM_TYPES = frozenset({
+_AGENT_EVENT_TYPES = _ITEM_EVENT_TYPES | {"thread.started", "turn.started", "turn.completed", "turn.failed", "error"}
+_AGENT_ITEM_TYPES = frozenset({
     "agent_message", "collab_tool_call", "command_execution", "error", "file_change", "mcp_tool_call",
-    "reasoning", "todo_list", "web_search",
+    "reasoning", "todo_list", "tool_call", "web_search",
 })
-_COMMAND_STATUSES = frozenset({"in_progress", "completed", "failed"})
+_COMMAND_STATUSES = frozenset({"in_progress", "completed", "failed", "declined"})
+# Command IDs from Codex and from Claude Code. Anything else is not copied to telemetry.
+_COMMAND_ID = (
+    r"(?:item_[0-9]{1,20}|exec-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|toolu_[A-Za-z0-9]{1,64})"
+)
 
 
 def allowed_label(value: object, allowed: frozenset[str]) -> str | None:
@@ -55,7 +59,7 @@ def command_exit_code(value: object) -> int | None:
 
 @dataclass(frozen=True)
 class SseRecordDetails:
-    """Operational metadata selected from one Codex event."""
+    """Operational metadata selected from one agent event."""
 
     event_type: str
     flush_to_sse_us: int
@@ -65,11 +69,11 @@ class SseRecordDetails:
 
     @classmethod
     def from_event(cls, event: TraceEvent, flush_to_sse_us: int) -> Self:
-        event_type = allowed_label(event.type, _CODEX_EVENT_TYPES) or "other"
+        event_type = allowed_label(event.type, _AGENT_EVENT_TYPES) or "other"
         item = (event.model_extra or {}).get("item")
         if event_type not in _ITEM_EVENT_TYPES or not isinstance(item, dict):
             return cls(event_type, flush_to_sse_us)
-        item_type = allowed_label(item.get("type"), _CODEX_ITEM_TYPES) or "other"
+        item_type = allowed_label(item.get("type"), _AGENT_ITEM_TYPES) or "other"
         if item_type != "command_execution":
             return cls(event_type, flush_to_sse_us, item_type)
         return cls(
@@ -312,7 +316,7 @@ class ObservedCommandSpans:
         if not isinstance(item, dict) or item.get("type") != "command_execution":
             return
         item_id = item.get("id")
-        if not isinstance(item_id, str) or fullmatch(r"(?:item_[0-9]{1,20}|exec-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})", item_id) is None:
+        if not isinstance(item_id, str) or fullmatch(_COMMAND_ID, item_id) is None:
             return
         if item_id in self._completed:
             return
@@ -330,7 +334,7 @@ class ObservedCommandSpans:
         status = allowed_label(raw_status, _COMMAND_STATUSES)
         exit_code = command_exit_code(raw_exit_code)
         with operation_span(
-            "codex.command", activate=False,
+            "agent.command", activate=False,
             start_time_ns=self._origin_ns + start_offset_ns,
             end_time_ns=self._origin_ns + end_offset_ns,
         ) as span:
@@ -349,12 +353,12 @@ class ObservedCommandSpans:
 
 
 def finish_command_span(span: Span, status: str | None, exit_code: int | None) -> None:
-    if status == "failed" or (exit_code is not None and exit_code != 0):
-        finish_span(span, "failed", error_code="codex_command_failed")
+    if status in {"failed", "declined"} or (exit_code is not None and exit_code != 0):
+        finish_span(span, "failed", error_code="command_failed")
     elif status == "completed" or exit_code == 0:
         finish_span(span, "completed")
     else:
-        finish_span(span, "unconfirmed", error_code="codex_command_result_unconfirmed")
+        finish_span(span, "unconfirmed", error_code="command_result_unconfirmed")
 
 
 def exit_outcome(exit_code: int | None) -> tuple[Outcome, str | None]:

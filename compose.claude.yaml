@@ -1,0 +1,10 @@
+# Optional, experimental: also offer Claude Code. Compose requires the variable of every secret it declares,
+# so the key lives in this file to keep CLAUDE_CODE_API_KEY unnecessary otherwise.
+services:
+  executor:
+    secrets:
+      - claude_api_key
+
+secrets:
+  claude_api_key:
+    environment: CLAUDE_CODE_API_KEY
