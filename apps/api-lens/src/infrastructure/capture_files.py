@@ -138,6 +138,28 @@ class CaptureFiles:
             current = child
         raise ValueError("Continuation links contain a cycle.")
 
+    def conversation_thread(self) -> UUID | None:
+        """Return the thread confirmed by this run or its nearest confirmed ancestor."""
+        current = self
+        visited: set[Path] = set()
+        while current.directory not in visited:
+            visited.add(current.directory)
+            result = current.read_result()
+            if result is not None and result.persistence_confirmed and result.thread_id is not None:
+                return result.thread_id
+            session = current.read_session()
+            if session is None or session.previous_run_id is None:
+                return None
+            try:
+                parent = self.find(self.directory.parent, session.previous_run_id)
+            except FileNotFoundError as error:
+                raise ValueError("Invalid continuation link.") from error
+            child = parent.successor()
+            if child is None or child.directory != current.directory:
+                raise ValueError("Invalid continuation link.")
+            current = parent
+        raise ValueError("Continuation links contain a cycle.")
+
     def _publish_once(self, name: str, contents: str) -> None:
         with NamedTemporaryFile(dir=self.directory, mode="w", encoding="utf-8", delete_on_close=False) as temporary:
             temporary.write(contents)

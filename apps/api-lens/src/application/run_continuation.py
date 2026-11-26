@@ -21,12 +21,14 @@ class RecordedResult(Protocol):
     exit_code: int | None
     thread_id: UUID | None
     persistence_confirmed: bool
+    conflicting_thread_id: UUID | None
 
 
 class SavedConversationRun(Protocol):
     def read_session(self) -> RunSession | None: ...
     def latest_run_id(self) -> str: ...
     def is_active(self) -> bool: ...
+    def conversation_thread(self) -> UUID | None: ...
 
 
 type ContinuationState = Literal["available", "active", "superseded", "ephemeral", "unavailable"]
@@ -60,4 +62,7 @@ def _eligibility(
         return "available", None
     if capture.is_active():
         return "active", "Wait for this run to finish."
+    # A finished attempt that never confirmed its session resumes the thread its lineage confirmed.
+    if result is not None and result.conflicting_thread_id is None and capture.conversation_thread() is not None:
+        return "available", None
     return "unavailable", "Codex did not confirm a saved session for this run."

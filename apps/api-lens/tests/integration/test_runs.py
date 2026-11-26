@@ -32,6 +32,7 @@ from src.application import capture_run
 from src.application.capture_run import FlushedRecord
 from src.application.run_continuation import RunSession
 from src.domain.trace_events import TimedEvent
+from src.infrastructure import executor_client
 from src.infrastructure.capture_files import CaptureFiles
 from src.infrastructure.catalog_run import CatalogRun
 
@@ -274,6 +275,13 @@ if prompt == "stream across reconnect":
     emit(json.dumps({"type": "future.event", "sequence": 35}), flush=True)
     wait_for("finish-run")
     emit('{"type":"turn.completed"}', flush=True)
+    raise SystemExit(0)
+if prompt == "stay silent":
+    assert resuming
+    release = state / "release"
+    deadline = time.monotonic() + 5
+    while not release.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
     raise SystemExit(0)
 if prompt.startswith("  --help"):
     assert prompt == '  --help\\nLeia o README "juniper" ☕.\\n'
@@ -652,9 +660,61 @@ def test_continuation_rejects_legacy_and_reopens_failed_attempt_without_events(
     page = response.json()
     assert page["events"] == []
     assert page["status"] == "failed"
-    assert page["continuation"]["state"] == "unavailable"
+    assert page["continuation"]["state"] == "available"
     assert page["continuation"]["previous_run_id"] == first_id
-    assert backend.post(f"/runs/{failed_id}/continue", json={"prompt": "again"}).status_code == 409
+    assert backend.get(f"/runs/{first_id}/events").json()["continuation"]["state"] == "superseded"
+
+    (run_workspace / "state" / "reject-resume").unlink()
+    retried = backend.post(f"/runs/{failed_id}/continue", json={"prompt": "recall the marker"})
+    assert retried.status_code == 200
+    assert "niobium" in retried.text
+    assert backend.get(f"/runs/{retried.headers['X-Run-ID']}/events").json()["continuation"]["state"] == "available"
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_a_continuation_rejected_by_a_busy_executor_can_be_retried(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path,
+) -> None:
+    backend, _ = live_http
+    first_id = backend.post("/runs", json=prompt_body("save marker: niobium")).headers["X-Run-ID"]
+    with backend.stream("POST", "/runs", json=prompt_body(LITERAL_PROMPT)) as other:
+        frames = other.iter_lines()
+        next_frame(frames)
+        busy = backend.post(f"/runs/{first_id}/continue", json={"prompt": "recall the marker"})
+        (run_workspace / "state" / "release").touch()
+        list(frames)
+    assert busy.status_code == 200
+    busy_id = busy.headers["X-Run-ID"]
+    assert backend.get(f"/runs/{busy_id}/events").json()["continuation"]["state"] == "available"
+
+    retried = backend.post(f"/runs/{busy_id}/continue", json={"prompt": "recall the marker"})
+    assert retried.status_code == 200
+    assert "niobium" in retried.text
+
+
+@pytest.mark.usefixtures("executor_socket")
+def test_a_continuation_that_times_out_can_be_retried(
+    live_http: tuple[httpx.Client, Event], run_workspace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _ = live_http
+    first_id = backend.post("/runs", json=prompt_body("save marker: niobium")).headers["X-Run-ID"]
+    monkeypatch.setattr(executor_client, "READ_TIMEOUT_SECONDS", 0.2)
+    silent = backend.post(f"/runs/{first_id}/continue", json={"prompt": "stay silent"})
+    (run_workspace / "state" / "release").touch()
+    monkeypatch.setattr(executor_client, "READ_TIMEOUT_SECONDS", 120.0)
+    assert silent.status_code == 200
+    silent_id = silent.headers["X-Run-ID"]
+    assert backend.get(f"/runs/{silent_id}/events").json()["continuation"]["state"] == "available"
+
+    deadline = monotonic() + 5
+    while True:
+        retried = backend.post(f"/runs/{silent_id}/continue", json={"prompt": "recall the marker"})
+        if "niobium" in retried.text or monotonic() >= deadline:
+            break
+        silent_id = retried.headers["X-Run-ID"]
+        sleep(0.05)
+    assert retried.status_code == 200
+    assert "niobium" in retried.text
 
 
 def test_a_thread_id_from_an_older_executor_does_not_make_a_saved_run_resumable(

@@ -123,11 +123,12 @@ def resumable_capture(run_id: str) -> tuple[CaptureFiles, UUID]:
         projection = Conversations(ConversationStore(CAPTURE_ROOT))
         projection.by_run(run_id)
         continuation = describe_continuation(run_id, origin, result)
+        thread_id = origin.conversation_thread() if continuation.state == "available" else None
     except (OSError, ValueError) as error:
         raise HTTPException(status_code=503, detail="Run capture is unavailable.") from error
-    if continuation.state != "available" or result is None or result.thread_id is None:
+    if thread_id is None:
         raise HTTPException(status_code=409, detail=continuation.reason or "This run cannot be continued.")
-    return origin, result.thread_id
+    return origin, thread_id
 
 
 def executor_socket() -> str:

@@ -33,6 +33,7 @@ from .executor_protocol import (
 )
 
 _EXECUTOR_MESSAGE = TypeAdapter(RunOutput | RunExit | RunError)
+READ_TIMEOUT_SECONDS = 120.0
 
 
 class ExecutorClient:
@@ -94,7 +95,7 @@ class ExecutorClient:
     def _request(self, request: ExecutorRequest, on_stdout: StdoutConsumer, span: Span) -> ExecutionResult:
         progress = EventProgress("executor.request.first_event_received", "executor_client")
         transport = httpx.HTTPTransport(uds=self._socket)
-        timeout = httpx.Timeout(120, connect=5.0)
+        timeout = httpx.Timeout(READ_TIMEOUT_SECONDS, connect=5.0)
         with (
             httpx.Client(
                 base_url="http://executor-host", timeout=timeout, trust_env=False, transport=transport,
